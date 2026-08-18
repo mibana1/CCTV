@@ -29,6 +29,8 @@ GPU 및 다채널 검증은 별도의 동작 테스트 PC에서 진행합니다.
 Ubuntu/WSL에서 다음을 실행합니다.
 
 ```bash
+cd "/mnt/c/Users/노주형/Desktop/CCTVTest/CCTV"
+cp .env.example .env
 cd "/mnt/c/Users/노주형/Desktop/CCTVTest/CCTV/backend"
 uv sync
 uv run pytest
@@ -36,6 +38,9 @@ uv run cctv
 ```
 
 API 확인 주소는 `http://127.0.0.1:8000/health`입니다.
+애플리케이션은 프로젝트 루트의 `.env`와 운영체제 환경변수를 읽으며,
+시작할 때 SQLite 파일과 미적용 스키마 마이그레이션을 초기화합니다.
+기본 SQLite 경로는 `runtime/cctv.db`입니다.
 
 ## Docker 시작
 
@@ -48,4 +53,3 @@ docker compose up --build
 
 실제 RTSP 또는 Hiperwall 연동 전에
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)의 차단 항목을 먼저 확인합니다.
-
