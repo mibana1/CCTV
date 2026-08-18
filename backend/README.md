@@ -173,6 +173,9 @@ docker compose run --rm backend \
 로컬 영상과 RTSP 워커의 `--match-faces`는 프레임 안의 모든 얼굴을 검출하고,
 등록 사진별 코사인 유사도 중 인물별 최고값을 비교합니다. 최고 점수가 기본 0.45
 이상이고 두 번째 인물과의 차이가 기본 0.05 이상일 때만 등록 인물로 판정합니다.
+유사도가 임계값보다 낮으면 최고 후보가 있더라도 인물 ID를 배정하지 않고
+`match_status=unknown`, `rejection_reason=below_threshold`로 기록합니다. 후보 간 점수
+차이가 부족한 경우에도 `unknown`으로 처리하고 거절 사유는 `ambiguous`가 됩니다.
 결과 JSON과 구조화 로그에는 점수·판정·얼굴 좌표를 기록하지만 임베딩 벡터는
 기록하지 않습니다.
 

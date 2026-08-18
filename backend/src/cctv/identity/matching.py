@@ -6,6 +6,7 @@ import logging
 from collections import defaultdict
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from math import isfinite, sqrt
 from typing import Protocol
 
@@ -18,6 +19,20 @@ logger = logging.getLogger(__name__)
 
 class FaceMatchingError(RuntimeError):
     """Face matching cannot start with the supplied configuration or candidates."""
+
+
+class FaceMatchStatus(StrEnum):
+    """Final identity assignment state for a detected face."""
+
+    MATCHED = "matched"
+    UNKNOWN = "unknown"
+
+
+class FaceMatchRejectionReason(StrEnum):
+    """Why a best candidate was not accepted as the detected identity."""
+
+    BELOW_THRESHOLD = "below_threshold"
+    AMBIGUOUS = "ambiguous"
 
 
 class FrameFaceExtractor(Protocol):
@@ -46,15 +61,28 @@ class IdentitySimilarity:
 class FaceMatchDecision:
     """One detected face's best candidate and conservative match decision."""
 
-    matched: bool
+    status: FaceMatchStatus
+    rejection_reason: FaceMatchRejectionReason | None
     best_candidate: IdentitySimilarity
     second_best_similarity: float | None
     similarity_threshold: float
     minimum_margin: float
 
     @property
+    def matched(self) -> bool:
+        return self.status is FaceMatchStatus.MATCHED
+
+    @property
     def identity_id(self) -> str | None:
         return self.best_candidate.identity_id if self.matched else None
+
+    @property
+    def external_id(self) -> str | None:
+        return self.best_candidate.external_id if self.matched else None
+
+    @property
+    def display_name(self) -> str | None:
+        return self.best_candidate.display_name if self.matched else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,8 +169,18 @@ class FaceIdentityMatcher:
             second_best_similarity is None
             or best.similarity - second_best_similarity >= self.minimum_margin
         )
+        if best.similarity < self.similarity_threshold:
+            status = FaceMatchStatus.UNKNOWN
+            rejection_reason = FaceMatchRejectionReason.BELOW_THRESHOLD
+        elif not margin_is_sufficient:
+            status = FaceMatchStatus.UNKNOWN
+            rejection_reason = FaceMatchRejectionReason.AMBIGUOUS
+        else:
+            status = FaceMatchStatus.MATCHED
+            rejection_reason = None
         return FaceMatchDecision(
-            matched=best.similarity >= self.similarity_threshold and margin_is_sufficient,
+            status=status,
+            rejection_reason=rejection_reason,
             best_candidate=best,
             second_best_similarity=second_best_similarity,
             similarity_threshold=self.similarity_threshold,
@@ -218,8 +256,12 @@ class FaceMatchingConsumer:
                         "height": face.bounds.height,
                     },
                     "detection_confidence": face.detection_confidence,
+                    "match_status": decision.status,
+                    "rejection_reason": decision.rejection_reason,
                     "matched": decision.matched,
                     "identity_id": decision.identity_id,
+                    "external_id": decision.external_id,
+                    "display_name": decision.display_name,
                     "best_candidate_identity_id": decision.best_candidate.identity_id,
                     "best_candidate_external_id": decision.best_candidate.external_id,
                     "best_similarity": similarity,
@@ -265,6 +307,8 @@ __all__ = [
     "FaceIdentityMatcher",
     "FaceMatchDecision",
     "FaceMatchObservation",
+    "FaceMatchRejectionReason",
+    "FaceMatchStatus",
     "FaceMatchingConsumer",
     "FaceMatchingError",
     "FaceMatchingRunSummary",

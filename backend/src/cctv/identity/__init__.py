@@ -22,6 +22,8 @@ from cctv.identity.matching import (
     FaceMatchingError,
     FaceMatchingRunSummary,
     FaceMatchObservation,
+    FaceMatchRejectionReason,
+    FaceMatchStatus,
     FrameFaceExtractor,
     IdentitySimilarity,
 )
@@ -56,6 +58,8 @@ __all__ = [
     "FaceIdentityMatcher",
     "FaceMatchDecision",
     "FaceMatchObservation",
+    "FaceMatchRejectionReason",
+    "FaceMatchStatus",
     "FaceMatchingConsumer",
     "FaceMatchingError",
     "FaceMatchingRunSummary",

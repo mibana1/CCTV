@@ -12,6 +12,8 @@ from cctv.identity import (
     FaceIdentityMatcher,
     FaceMatchingConsumer,
     FaceMatchingError,
+    FaceMatchRejectionReason,
+    FaceMatchStatus,
 )
 from cctv.media import DecodedFrame
 
@@ -72,7 +74,11 @@ def test_matcher_uses_best_photo_score_per_identity(tmp_path: Path) -> None:
     decision = matcher.match((0.8, 0.6, 0))
 
     assert decision.matched is True
+    assert decision.status is FaceMatchStatus.MATCHED
+    assert decision.rejection_reason is None
     assert decision.identity_id == first.id
+    assert decision.external_id == "emp-001"
+    assert decision.display_name == "First person"
     assert decision.best_candidate.embedding_id == "first-side"
     assert decision.best_candidate.similarity == pytest.approx(1)
     assert decision.second_best_similarity == pytest.approx(0.6)
@@ -99,9 +105,16 @@ def test_matcher_rejects_ambiguous_or_low_similarity_faces(tmp_path: Path) -> No
 
     assert ambiguous.best_candidate.similarity == pytest.approx(0.707107)
     assert ambiguous.matched is False
+    assert ambiguous.status is FaceMatchStatus.UNKNOWN
+    assert ambiguous.rejection_reason is FaceMatchRejectionReason.AMBIGUOUS
     assert ambiguous.identity_id is None
+    assert ambiguous.external_id is None
+    assert ambiguous.display_name is None
     assert low_similarity.best_candidate.similarity == 0
     assert low_similarity.matched is False
+    assert low_similarity.status is FaceMatchStatus.UNKNOWN
+    assert low_similarity.rejection_reason is FaceMatchRejectionReason.BELOW_THRESHOLD
+    assert low_similarity.identity_id is None
 
 
 def test_matcher_requires_registered_candidates() -> None:
@@ -151,3 +164,12 @@ def test_face_matching_consumer_aggregates_privacy_safe_results(tmp_path: Path) 
     assert summary.matched_identity_counts == {identity.id: 1}
     assert summary.best_similarity == 1
     assert len(consumer.last_observations) == 2
+    matched_decision = consumer.last_observations[0].decision
+    unknown_decision = consumer.last_observations[1].decision
+    assert matched_decision.status is FaceMatchStatus.MATCHED
+    assert matched_decision.identity_id == identity.id
+    assert unknown_decision.status is FaceMatchStatus.UNKNOWN
+    assert unknown_decision.rejection_reason is FaceMatchRejectionReason.BELOW_THRESHOLD
+    assert unknown_decision.identity_id is None
+    assert unknown_decision.external_id is None
+    assert unknown_decision.display_name is None
