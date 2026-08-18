@@ -8,7 +8,12 @@ from cctv.inference import BoundingBox, Detection, FrameDetections
 from cctv.main import create_app
 
 
-def create_result(sample_index: int, class_name: str, confidence: float) -> FrameDetections:
+def create_result(
+    sample_index: int,
+    class_name: str,
+    confidence: float,
+    track_id: int | None = None,
+) -> FrameDetections:
     return FrameDetections(
         source_index=sample_index * 2,
         sample_index=sample_index,
@@ -22,6 +27,7 @@ def create_result(sample_index: int, class_name: str, confidence: float) -> Fram
                 label=class_name,
                 confidence=confidence,
                 box=BoundingBox(x1=100, y1=200, x2=300, y2=500),
+                track_id=track_id,
             ),
         ),
     )
@@ -56,9 +62,9 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
     with TestClient(create_app(settings)) as client:
         repository = DetectionRepository(database_path)
         first_run_id = create_run(repository, "run-1", "first.mp4")
-        repository.save_frame(first_run_id, create_result(0, "person", 0.9))
-        repository.save_frame(first_run_id, create_result(1, "person", 0.4))
-        repository.save_frame(first_run_id, create_result(2, "car", 0.8))
+        repository.save_frame(first_run_id, create_result(0, "person", 0.9, track_id=1))
+        repository.save_frame(first_run_id, create_result(1, "person", 0.4, track_id=1))
+        repository.save_frame(first_run_id, create_result(2, "car", 0.8, track_id=2))
         repository.finish_analysis_run(first_run_id, status=AnalysisRunStatus.COMPLETED)
 
         second_run_id = create_run(repository, "run-2", "second.mp4")
@@ -78,6 +84,10 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
             },
         )
         second_detection_page = client.get("/detections", params={"page": 2, "limit": 2})
+        tracked_detections = client.get(
+            "/detections",
+            params={"analysis_run_id": first_run_id, "track_id": 1},
+        )
 
         assert run_page.status_code == 200
         assert run_page.json()["total"] == 2
@@ -96,6 +106,7 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
         assert detections.json()["total"] == 1
         assert detections.json()["items"][0]["class_name"] == "person"
         assert detections.json()["items"][0]["confidence"] == 0.9
+        assert detections.json()["items"][0]["track_id"] == 1
         assert detections.json()["items"][0]["box"] == {
             "x1": 100,
             "y1": 200,
@@ -105,8 +116,12 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
         assert second_detection_page.status_code == 200
         assert second_detection_page.json()["total"] == 4
         assert len(second_detection_page.json()["items"]) == 2
+        assert tracked_detections.status_code == 200
+        assert tracked_detections.json()["total"] == 2
+        assert {item["track_id"] for item in tracked_detections.json()["items"]} == {1}
 
         assert client.get("/analysis-runs/missing").status_code == 404
         assert client.get("/analysis-runs", params={"limit": 101}).status_code == 422
         assert client.get("/detections", params={"page": 0}).status_code == 422
         assert client.get("/detections", params={"min_confidence": 1.1}).status_code == 422
+        assert client.get("/detections", params={"track_id": 1}).status_code == 422

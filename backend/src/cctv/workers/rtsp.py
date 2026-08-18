@@ -18,7 +18,7 @@ from types import FrameType
 from cctv.core.logging import configure_logging, shutdown_logging
 from cctv.core.settings import AiDevice, get_settings
 from cctv.db import AnalysisRunRecord, AnalysisRunStatus, DetectionRepository, initialize_database
-from cctv.inference import CpuYoloDetector, load_class_names
+from cctv.inference import CpuYoloDetector, IoUTracker, load_class_names
 from cctv.media import (
     DecodedFrame,
     RtspStreamReader,
@@ -283,6 +283,7 @@ def run(argv: Sequence[str] | None = None) -> None:
     try:
         consumers: list[FrameConsumer] = []
         detector: CpuYoloDetector | None = None
+        tracker: IoUTracker | None = None
         repository: DetectionRepository | None = None
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
@@ -304,6 +305,12 @@ def run(argv: Sequence[str] | None = None) -> None:
                     else settings.yolo_nms_threshold
                 ),
             )
+            if settings.tracking_enabled:
+                tracker = IoUTracker(
+                    iou_threshold=settings.tracker_iou_threshold,
+                    max_missed_frames=settings.tracker_max_missed_frames,
+                    max_idle_seconds=settings.tracker_max_idle_seconds,
+                )
             if settings.persist_detections:
                 initialize_database(settings.database_path)
                 repository = DetectionRepository(settings.database_path)
@@ -321,6 +328,8 @@ def run(argv: Sequence[str] | None = None) -> None:
 
             def analyze_frame(frame: DecodedFrame) -> None:
                 result = detector.analyze(frame)
+                if tracker is not None:
+                    result = tracker.update(result)
                 if repository is not None and analysis_run is not None:
                     repository.save_frame(analysis_run.id, result)
 
@@ -411,6 +420,10 @@ def run(argv: Sequence[str] | None = None) -> None:
             output["analysis"]["persistence_enabled"] = settings.persist_detections
             output["analysis"]["analysis_run_id"] = (
                 analysis_run.id if analysis_run is not None else None
+            )
+            output["analysis"]["tracking_enabled"] = tracker is not None
+            output["analysis"]["tracking"] = (
+                asdict(tracker.summary) if tracker is not None else None
             )
         print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))
     finally:

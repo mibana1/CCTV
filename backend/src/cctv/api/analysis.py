@@ -72,6 +72,7 @@ class DetectionResponse(BaseModel):
     frame_width: int
     frame_height: int
     inference_seconds: float
+    track_id: int | None
     class_id: int
     class_name: str
     confidence: float
@@ -133,14 +134,21 @@ def list_detections(
     page: PageNumber = 1,
     limit: PageLimit = DEFAULT_PAGE_SIZE,
     analysis_run_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    track_id: Annotated[int | None, Query(ge=1)] = None,
     class_name: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
     min_confidence: Annotated[float | None, Query(ge=0, le=1)] = None,
 ) -> DetectionPageResponse:
-    """Query detections by execution, exact class name, and minimum confidence."""
+    """Query detections by execution, per-run track, class, and confidence."""
+    if track_id is not None and analysis_run_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="analysis_run_id is required when filtering by track_id",
+        )
     result = _repository(request).list_detections(
         page=page,
         limit=limit,
         analysis_run_id=analysis_run_id,
+        track_id=track_id,
         class_name=class_name,
         min_confidence=min_confidence,
     )
@@ -172,6 +180,7 @@ def _detection_response(record: DetectionRecord) -> DetectionResponse:
         frame_width=record.frame_width,
         frame_height=record.frame_height,
         inference_seconds=record.inference_seconds,
+        track_id=record.track_id,
         class_id=record.class_id,
         class_name=record.class_name,
         confidence=record.confidence,

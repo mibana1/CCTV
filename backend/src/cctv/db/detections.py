@@ -68,6 +68,7 @@ class DetectionRecord:
     frame_width: int
     frame_height: int
     inference_seconds: float
+    track_id: int | None
     class_id: int
     class_name: str
     confidence: float
@@ -213,13 +214,14 @@ class DetectionRepository:
             connection.executemany(
                 """
                     INSERT INTO detections (
-                        analyzed_frame_id, class_id, class_name, confidence,
+                        analyzed_frame_id, track_id, class_id, class_name, confidence,
                         x1, y1, x2, y2
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 (
                     (
                         frame_id,
+                        detection.track_id,
                         detection.class_id,
                         detection.label,
                         detection.confidence,
@@ -355,19 +357,28 @@ class DetectionRepository:
         page: int = 1,
         limit: int = DEFAULT_PAGE_SIZE,
         analysis_run_id: str | None = None,
+        track_id: int | None = None,
         class_name: str | None = None,
         min_confidence: float | None = None,
     ) -> DetectionPage:
-        """Query detections by run, class, and minimum confidence."""
+        """Query detections by run, per-run track, class, and minimum confidence."""
         _validate_pagination(page, limit)
         if min_confidence is not None and not 0 <= min_confidence <= 1:
             raise ValueError("min_confidence must be between 0 and 1")
+        if track_id is not None:
+            if track_id < 1:
+                raise ValueError("track_id must be at least 1")
+            if analysis_run_id is None:
+                raise ValueError("analysis_run_id is required when filtering by track_id")
 
         clauses: list[str] = []
         parameters: list[object] = []
         if analysis_run_id is not None:
             clauses.append("frame.analysis_run_id = ?")
             parameters.append(analysis_run_id)
+        if track_id is not None:
+            clauses.append("detection.track_id = ?")
+            parameters.append(track_id)
         if class_name is not None:
             normalized_class_name = class_name.strip()
             if not normalized_class_name:
@@ -404,6 +415,7 @@ class DetectionRepository:
                     frame.frame_width,
                     frame.frame_height,
                     frame.inference_seconds,
+                    detection.track_id,
                     detection.class_id,
                     detection.class_name,
                     detection.confidence,
@@ -481,6 +493,7 @@ def _detection_from_row(row: sqlite3.Row) -> DetectionRecord:
         frame_width=int(row["frame_width"]),
         frame_height=int(row["frame_height"]),
         inference_seconds=float(row["inference_seconds"]),
+        track_id=int(row["track_id"]) if row["track_id"] is not None else None,
         class_id=int(row["class_id"]),
         class_name=str(row["class_name"]),
         confidence=float(row["confidence"]),

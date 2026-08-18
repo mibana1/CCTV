@@ -14,9 +14,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 2
-    assert first.applied_migrations == (1, 2)
-    assert second.schema_version == 2
+    assert first.schema_version == 3
+    assert first.applied_migrations == (1, 2, 3)
+    assert second.schema_version == 3
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -41,6 +41,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
         assert [dict(migration) for migration in migrations] == [
             {"version": 1, "name": "initial_camera_schema"},
             {"version": 2, "name": "detection_result_schema"},
+            {"version": 3, "name": "detection_tracking_schema"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {"analysis_runs", "analyzed_frames", "detections"}
@@ -68,7 +69,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 2
+    assert health.schema_version == 3
     assert health.journal_mode == "wal"
 
 

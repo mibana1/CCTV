@@ -89,5 +89,13 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 Hiperwall에서 원본 영상을 읽을 주소는
 `rtsp://<Docker 호스트 IP>:8554/camera`입니다.
 
+YOLO 분석 시에는 기본으로 클래스별 IoU 객체 추적이 적용되어 각 검출 결과에
+분석 실행 내에서 유효한 `track_id`가 저장됩니다. `/detections` 응답에서도 ID를
+확인할 수 있고, 특정 객체의 이력은
+`/detections?analysis_run_id=<run-id>&track_id=<track-id>`로 조회합니다. 추적을
+끄려면 `CCTV_TRACKING_ENABLED=false`를 사용합니다. 기본값은 IoU 임계값 `0.3`,
+누락 허용 `4`프레임, 유휴 만료 `3`초이며 각각 `.env`에서 조정할 수 있습니다.
+과거 스키마에서 저장된 검출 결과의 `track_id`는 `null`로 유지됩니다.
+
 실제 RTSP 또는 Hiperwall 연동 전에
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)의 차단 항목을 먼저 확인합니다.

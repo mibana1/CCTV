@@ -32,12 +32,14 @@ def make_detection(
     class_id: int,
     class_name: str,
     confidence: float,
+    track_id: int | None = None,
 ) -> Detection:
     return Detection(
         class_id=class_id,
         label=class_name,
         confidence=confidence,
         box=BoundingBox(x1=10, y1=20, x2=110, y2=220),
+        track_id=track_id,
     )
 
 
@@ -66,7 +68,7 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
         run.id,
         make_result(
             0,
-            make_detection(0, "person", 0.9),
+            make_detection(0, "person", 0.9, track_id=1),
             make_detection(2, "car", 0.6),
         ),
     )
@@ -88,6 +90,7 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
     assert [item.class_name for item in detections.items] == ["person", "car"]
     assert detections.items[0].frame_width == 640
     assert detections.items[0].frame_height == 360
+    assert detections.items[0].track_id == 1
     assert detections.items[0].x2 == 110
 
     with closing(connect_database(database_path)) as connection:
@@ -112,7 +115,7 @@ def test_repository_filters_and_paginates_detections(tmp_path: Path) -> None:
         first_run.id,
         make_result(
             0,
-            make_detection(0, "person", 0.9),
+            make_detection(0, "person", 0.9, track_id=1),
             make_detection(0, "person", 0.4),
             make_detection(2, "car", 0.8),
         ),
@@ -131,6 +134,7 @@ def test_repository_filters_and_paginates_detections(tmp_path: Path) -> None:
         class_name="PERSON",
         min_confidence=0.5,
     )
+    tracked = repository.list_detections(analysis_run_id=first_run.id, track_id=1)
     failed_runs = repository.list_analysis_runs(status=AnalysisRunStatus.FAILED)
 
     assert first_page.total == 4
@@ -138,6 +142,8 @@ def test_repository_filters_and_paginates_detections(tmp_path: Path) -> None:
     assert len(second_page.items) == 2
     assert filtered.total == 1
     assert filtered.items[0].confidence == pytest.approx(0.9)
+    assert tracked.total == 1
+    assert tracked.items[0].track_id == 1
     assert failed_runs.total == 1
     assert failed_runs.items[0].id == second_run.id
     assert failed_runs.items[0].error_type == "TestError"
@@ -178,3 +184,12 @@ def test_repository_rejects_invalid_pagination(tmp_path: Path, page: int, limit:
 
     with pytest.raises(ValueError):
         repository.list_detections(page=page, limit=limit)
+
+
+def test_repository_requires_run_when_filtering_by_track(tmp_path: Path) -> None:
+    database_path = tmp_path / "cctv.db"
+    initialize_database(database_path)
+    repository = DetectionRepository(database_path)
+
+    with pytest.raises(ValueError, match="analysis_run_id is required"):
+        repository.list_detections(track_id=1)

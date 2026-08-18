@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     yolo_input_size: int = Field(default=640, ge=32, le=4096)
     yolo_confidence_threshold: float = Field(default=0.25, gt=0, le=1)
     yolo_nms_threshold: float = Field(default=0.45, ge=0, le=1)
+    tracking_enabled: bool = True
+    tracker_iou_threshold: float = Field(default=0.3, gt=0, le=1)
+    tracker_max_missed_frames: int = Field(default=4, ge=0, le=300)
+    tracker_max_idle_seconds: float = Field(default=3.0, gt=0, le=300)
     persist_detections: bool = True
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)

@@ -139,6 +139,7 @@ class Detection:
     label: str
     confidence: float
     box: BoundingBox
+    track_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,6 @@
 """Object detection, tracking, and normalized inference results."""
 
+from cctv.inference.tracking import IoUTracker, TrackingSummary
 from cctv.inference.yolo import (
     COCO_CLASS_NAMES,
     BoundingBox,
@@ -19,6 +20,8 @@ __all__ = [
     "CpuYoloDetector",
     "Detection",
     "FrameDetections",
+    "IoUTracker",
+    "TrackingSummary",
     "YoloError",
     "YoloInferenceError",
     "YoloModelLoadError",
