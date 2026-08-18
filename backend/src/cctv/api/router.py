@@ -10,12 +10,14 @@ from pydantic import BaseModel
 
 from cctv import __version__
 from cctv.api.analysis import router as analysis_router
+from cctv.api.rules import router as rules_router
 from cctv.db import check_database_health
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 router.include_router(analysis_router)
+router.include_router(rules_router)
 
 
 class DatabaseHealthResponse(BaseModel):

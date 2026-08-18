@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     tracker_max_missed_frames: int = Field(default=4, ge=0, le=300)
     tracker_max_idle_seconds: float = Field(default=3.0, gt=0, le=300)
     persist_detections: bool = True
+    rules_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"

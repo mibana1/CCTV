@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from cctv.core.settings import get_settings
-from cctv.db import AnalysisRunStatus, DetectionRepository
+from cctv.db import AnalysisRunStatus, DetectionRepository, RuleRepository, initialize_database
 from cctv.media import DecodedFrame, SnapshotWriter
 from cctv.workers import (
     LocalVideoWorker,
@@ -163,9 +163,22 @@ def test_local_video_cli_persists_yolo_results(
     monkeypatch.setenv("CCTV_AI_DEVICE", "cpu")
     monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "true")
+    monkeypatch.setenv("CCTV_RULES_ENABLED", "true")
     monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
     monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "runtime" / "cctv.jsonl"))
     get_settings.cache_clear()
+    initialize_database(database_path)
+    rule_repository = RuleRepository(database_path)
+    rule_repository.create_rule(
+        name="Entire frame",
+        source_name=video_path.name,
+        rule_type="intrusion",
+        class_name="person",
+        geometry={
+            "type": "polygon",
+            "points": [[0, 0], [1, 0], [1, 1], [0, 1]],
+        },
+    )
 
     try:
         run_local_video_worker(
@@ -189,11 +202,18 @@ def test_local_video_cli_persists_yolo_results(
 
     assert output["analysis"]["persistence_enabled"] is True
     assert output["analysis"]["analysis_run_id"] == runs.items[0].id
+    assert output["analysis"]["rules"] == {
+        "configured": True,
+        "enabled": True,
+        "loaded_count": 1,
+        "emitted_event_count": 1,
+    }
     assert runs.total == 1
     assert runs.items[0].status is AnalysisRunStatus.COMPLETED
     assert runs.items[0].processed_frames == 2
     assert runs.items[0].total_detections == 2
     assert repository.list_detections(analysis_run_id=runs.items[0].id).total == 2
+    assert rule_repository.list_events(analysis_run_id=runs.items[0].id).total == 1
 
 
 @pytest.mark.parametrize("max_samples", [0, -1])

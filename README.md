@@ -116,5 +116,17 @@ GET /tracks?analysis_run_id=<run-id>&class_name=person
     &observed_from_seconds=10&observed_to_seconds=20&active=true
 ```
 
+스키마 v6부터 추적 결과에 침입, 선 통과, 배회 규칙을 적용할 수 있습니다.
+규칙은 정규화 좌표 기반 공통 JSON으로 저장하고, 워커 시작 시 소스 이름별로
+적재합니다. 발생 이벤트는 `rule_events`에 프레임·트랙과 함께 저장됩니다.
+
+- 지원 규칙: `GET /rule-types`
+- 규칙 생성·목록: `POST /rules`, `GET /rules?source_name=camera-1`
+- 활성화 변경: `PATCH /rules/<rule-id>/enabled`
+- 이벤트 조회: `GET /rule-events?analysis_run_id=<run-id>&event_type=intrusion_started`
+
+구체적인 geometry와 parameters 형식 및 새 평가기 추가 방법은
+[`backend/README.md`](backend/README.md)의 규칙 엔진 절을 참고합니다.
+
 실제 RTSP 또는 Hiperwall 연동 전에
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)의 차단 항목을 먼저 확인합니다.

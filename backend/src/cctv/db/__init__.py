@@ -21,6 +21,13 @@ from cctv.db.detections import (
     TrackPage,
     TrackRecord,
 )
+from cctv.db.rules import (
+    RuleEventPage,
+    RuleEventRecord,
+    RulePage,
+    RuleRecord,
+    RuleRepository,
+)
 
 __all__ = [
     "DEFAULT_PAGE_SIZE",
@@ -33,6 +40,11 @@ __all__ = [
     "DetectionPage",
     "DetectionRecord",
     "DetectionRepository",
+    "RuleEventPage",
+    "RuleEventRecord",
+    "RulePage",
+    "RuleRecord",
+    "RuleRepository",
     "TrackObservationPage",
     "TrackObservationRecord",
     "TrackPage",

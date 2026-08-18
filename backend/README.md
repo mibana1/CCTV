@@ -97,6 +97,51 @@ GET /detections?analysis_run_id={id}&class_name=person&min_confidence=0.5&page=1
 `/detections`의 클래스 이름은 대소문자를 구분하지 않는 완전 일치 방식입니다.
 현재 API에는 사용자 인증이 없으므로 로컬 검증 네트워크 밖에 공개하지 마십시오.
 
+## 규칙 엔진
+
+`CCTV_RULES_ENABLED=true`(기본값), 객체 추적, 검출 저장이 모두 활성화된 분석
+워커는 시작할 때 해당 `source_name`의 활성 규칙을 SQLite에서 읽고 검증합니다.
+좌표는 해상도와 무관한 `0.0..1.0` 범위이며 객체 박스의 하단 중앙점을 판정
+기준으로 사용합니다. 규칙을 API로 변경한 경우 실행 중인 워커에는 영향을 주지
+않으며 다음 워커 시작부터 적용됩니다.
+
+- `intrusion`: polygon 진입 시 `intrusion_started`, 이탈 시 `intrusion_ended`
+- `line_crossing`: 유한 line 통과 시 방향을 포함한 `line_crossed`
+- `loitering`: polygon 안에서 지정 시간 체류 시 `loitering_started`, 이탈 시
+  `loitering_ended`
+
+```json
+POST /rules
+{
+  "name": "출입 금지 구역",
+  "source_name": "camera-1",
+  "rule_type": "intrusion",
+  "class_name": "person",
+  "geometry": {
+    "type": "polygon",
+    "points": [[0.1, 0.1], [0.9, 0.1], [0.9, 0.9], [0.1, 0.9]]
+  },
+  "parameters": {
+    "dwell_seconds": 0,
+    "missing_tolerance_seconds": 2,
+    "cooldown_seconds": 5
+  }
+}
+```
+
+`line_crossing`은 `geometry.type=line`과 두 점을 사용하며 `direction`은 `any`,
+`negative_to_positive`, `positive_to_negative` 중 하나입니다. `loitering`은
+`duration_seconds`가 기본 30초입니다. `GET /rule-types`, `GET /rules`,
+`PATCH /rules/{id}/enabled`, `GET /rule-events`로 지원 유형·설정·발생 이력을
+조회하거나 활성 상태를 바꿀 수 있습니다. 이벤트는 해당 프레임, 검출, 트랙과
+같은 SQLite 트랜잭션으로 저장됩니다.
+
+새 규칙은 `RuleEvaluator` 프로토콜에 맞는 독립 평가기를 만들고
+`built_in_evaluators()`에 등록합니다. 엔진, 워커, DB 스키마는 규칙 유형을
+하드코딩하지 않으므로 고유 `rule_type`, 설정 검증, `evaluate()`만 추가하면
+됩니다. 현재 체류·쿨다운 상태는 워커 메모리에 있으므로 워커 재시작 시
+초기화됩니다.
+
 ## RTSP 및 MediaMTX
 
 MediaMTX는 외부 카메라 RTSP를 `camera` 경로로 중계합니다. RTSP 워커는

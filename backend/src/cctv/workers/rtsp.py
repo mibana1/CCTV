@@ -17,7 +17,13 @@ from types import FrameType
 
 from cctv.core.logging import configure_logging, shutdown_logging
 from cctv.core.settings import AiDevice, get_settings
-from cctv.db import AnalysisRunRecord, AnalysisRunStatus, DetectionRepository, initialize_database
+from cctv.db import (
+    AnalysisRunRecord,
+    AnalysisRunStatus,
+    DetectionRepository,
+    RuleRepository,
+    initialize_database,
+)
 from cctv.inference import CpuYoloDetector, IoUTracker, load_class_names
 from cctv.media import (
     DecodedFrame,
@@ -25,6 +31,7 @@ from cctv.media import (
     SnapshotWriter,
     build_snapshot_run_directory,
 )
+from cctv.rules import RuleEngine
 from cctv.workers.local_video import (
     FrameConsumer,
     SequentialFrameConsumer,
@@ -285,6 +292,8 @@ def run(argv: Sequence[str] | None = None) -> None:
         detector: CpuYoloDetector | None = None
         tracker: IoUTracker | None = None
         repository: DetectionRepository | None = None
+        rule_engine: RuleEngine | None = None
+        emitted_rule_events = 0
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
         if analyze_yolo:
@@ -325,11 +334,38 @@ def run(argv: Sequence[str] | None = None) -> None:
                     nms_threshold=detector.nms_threshold,
                     sample_fps=effective_sample_fps,
                 )
+                if settings.rules_enabled and tracker is not None:
+                    definitions = RuleRepository(settings.database_path).list_rule_definitions(
+                        source_name=source_name
+                    )
+                    rule_engine = RuleEngine(definitions)
+                    logger.info(
+                        "Rule engine initialized",
+                        extra={
+                            "event": "rule_engine_initialized",
+                            "source_name": source_name,
+                            "rule_count": len(definitions),
+                            "supported_rule_types": rule_engine.supported_rule_types,
+                        },
+                    )
+            if settings.rules_enabled and rule_engine is None:
+                logger.warning(
+                    "Rule engine disabled for this run because tracking or persistence is unavailable",
+                    extra={
+                        "event": "rule_engine_unavailable",
+                        "tracking_enabled": tracker is not None,
+                        "persistence_enabled": settings.persist_detections,
+                    },
+                )
 
             def analyze_frame(frame: DecodedFrame) -> None:
+                nonlocal emitted_rule_events
+
                 result = detector.analyze(frame)
                 if tracker is not None:
                     result = tracker.update(result)
+                rule_events = rule_engine.process(result) if rule_engine is not None else ()
+                emitted_rule_events += len(rule_events)
                 if repository is not None and analysis_run is not None:
                     repository.save_frame(
                         analysis_run.id,
@@ -337,6 +373,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                         active_track_ids=(
                             tracker.active_track_ids if tracker is not None else None
                         ),
+                        rule_events=rule_events,
                     )
 
             consumers.append(analyze_frame)
@@ -431,6 +468,12 @@ def run(argv: Sequence[str] | None = None) -> None:
             output["analysis"]["tracking"] = (
                 asdict(tracker.summary) if tracker is not None else None
             )
+            output["analysis"]["rules"] = {
+                "configured": settings.rules_enabled,
+                "enabled": rule_engine is not None,
+                "loaded_count": len(rule_engine.rules) if rule_engine is not None else 0,
+                "emitted_event_count": emitted_rule_events,
+            }
         print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))
     finally:
         shutdown_logging()

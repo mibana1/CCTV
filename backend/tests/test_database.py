@@ -19,9 +19,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 5
-    assert first.applied_migrations == (1, 2, 3, 4, 5)
-    assert second.schema_version == 5
+    assert first.schema_version == 6
+    assert first.applied_migrations == (1, 2, 3, 4, 5, 6)
+    assert second.schema_version == 6
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -40,7 +40,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
                 WHERE type = 'table'
                     AND name IN (
                         'analysis_runs', 'analyzed_frames', 'detections',
-                        'tracks', 'track_observations'
+                        'tracks', 'track_observations', 'rules', 'rule_events'
                     )
                 """
             )
@@ -52,6 +52,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 3, "name": "detection_tracking_schema"},
             {"version": 4, "name": "track_history_schema"},
             {"version": 5, "name": "track_active_state_schema"},
+            {"version": 6, "name": "rule_engine_schema"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -60,6 +61,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             "detections",
             "tracks",
             "track_observations",
+            "rules",
+            "rule_events",
         }
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -85,7 +88,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 5
+    assert health.schema_version == 6
     assert health.journal_mode == "wal"
 
 

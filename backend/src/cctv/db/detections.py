@@ -18,6 +18,7 @@ from cctv.db.database import connect_database
 
 if TYPE_CHECKING:
     from cctv.inference import Detection, FrameDetections
+    from cctv.rules import RuleEvent
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
@@ -237,8 +238,11 @@ class DetectionRepository:
         result: FrameDetections,
         *,
         active_track_ids: Collection[int] | None = None,
+        rule_events: Collection[RuleEvent] = (),
     ) -> int:
-        """Atomically persist one analyzed frame and every detection it contains."""
+        """Atomically persist one frame, its detections, tracks, and rule events."""
+        from cctv.db.rules import insert_rule_events
+
         normalized_active_track_ids = _normalize_active_track_ids(active_track_ids)
         with closing(connect_database(self.database_path)) as connection, connection:
             run = connection.execute(
@@ -310,6 +314,12 @@ class DetectionRepository:
                     analysis_run_id=analysis_run_id,
                     active_track_ids=normalized_active_track_ids,
                 )
+            insert_rule_events(
+                connection,
+                analysis_run_id=analysis_run_id,
+                analyzed_frame_id=int(frame_id),
+                events=rule_events,
+            )
         persisted_frame_id = int(frame_id)
         logger.debug(
             "Frame detections persisted",
@@ -319,6 +329,7 @@ class DetectionRepository:
                 "analyzed_frame_id": persisted_frame_id,
                 "sample_index": result.sample_index,
                 "detection_count": len(result.detections),
+                "rule_event_count": len(rule_events),
             },
         )
         return persisted_frame_id
