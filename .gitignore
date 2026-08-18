@@ -216,3 +216,35 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# CCTV project local configuration
+.env.*
+!.env.example
+
+# CCTV runtime data
+runtime/**
+!runtime/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+
+# CCTV model artifacts are supplied outside Git
+artifacts/models/**
+!artifacts/models/.gitignore
+!artifacts/models/README.md
+*.pt
+*.onnx
+*.engine
+*.torchscript
+
+# Local media outputs
+*.mp4
+*.mkv
+*.avi
+*.h264
+
+# Frontend dependencies and local build output
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

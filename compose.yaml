@@ -1,0 +1,36 @@
+name: cctv-test
+
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      CCTV_APP_ENV: development
+      CCTV_DATABASE_PATH: /runtime/cctv.db
+      CCTV_MODEL_PATH: /models/model.onnx
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./runtime:/runtime
+      - ./artifacts/models:/models:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+    environment:
+      PORT: 5173
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+

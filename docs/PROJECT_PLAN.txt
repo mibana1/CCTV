@@ -1,0 +1,410 @@
+CCTV AI 분석 × Hiperwall 연동 프로젝트 구상
+작성일: 2026-08-18
+
+
+1. 프로젝트 개요
+
+이 프로젝트는 CCTV 영상을 수신하고 AI로 객체를 분석하여, 검색·통계·위험 이벤트를 관리하고 필요한 영상을 Hiperwall 영상월에 자동으로 표시하는 시스템을 구축하는 것이 목표다.
+
+주요 기능:
+
+- DVR, 인코더 또는 IP 카메라의 RTSP 영상 수신
+- 영상 파일 및 스냅샷 저장
+- YOLO 기반 사람, 자동차, 자전거, 동물 등 객체 검출
+- 카메라 내부의 track_id 기반 객체 추적
+- 카메라, 시간, 객체 종류, 이벤트별 검색
+- 침입, 배회, 과밀, 선 통과, 차량 이상 등 규칙 기반 위험 감지
+- HiperInterface를 통한 Hiperwall 콘텐츠 열기, 닫기, 배치, 크기, 라벨, 테두리 제어
+- 검색, 알림, 상태 모니터링을 위한 웹 대시보드
+- 향후 Verkada 웹훅 및 카메라 연동 어댑터 확장 가능
+
+
+2. 개발 및 검증 전략
+
+현재 PC는 WSL2 Ubuntu 26.04 LTS를 이용한 개발과 소규모 테스트 전용으로 사용한다.
+
+현재 PC의 범위:
+
+- Backend API, 설정, DB, 작업 큐 구현
+- Frontend 관리 화면 구현
+- 로컬 영상 또는 RTSP 1~3채널 수신 테스트
+- CPU 모드의 YOLO 기능 검증
+- SQLite, FFmpeg, Docker Compose 통합 테스트
+- Hiperwall HTTP/XML 인터페이스 소규모 연동 테스트
+
+별도 동작 테스트 PC의 범위:
+
+- NVIDIA GPU/CUDA 추론
+- 하드웨어 영상 디코딩
+- 다채널 RTSP 동시 처리
+- 장시간 연속 실행과 장애 복구
+- 실제 Hiperwall 장비 연동
+- 채널 증가에 따른 FPS, CPU, GPU, RAM, 네트워크 부하 측정
+
+현재 PC에서 50채널 운영과 장기 영상 보관은 진행하지 않는다.
+
+
+3. 전체 시스템 흐름
+
+CCTV / DVR / 인코더
+    ↓ RTSP
+RTSP 중계 서버(MediaMTX 후보)
+    ├─→ Backend 영상 수신·AI 분석
+    │      ├─ FFmpeg/OpenCV 디코딩
+    │      ├─ YOLO 객체 검출
+    │      ├─ 객체 추적
+    │      ├─ 위험 규칙 판단
+    │      └─ 스냅샷·메타데이터 저장
+    │
+    └─→ HiperSource IP Streams
+              └─ Hiperwall 원본 또는 분석 영상 표시
+
+Backend
+    ├─ REST API
+    ├─ SQLite(개발) / 향후 운영 DB 검토
+    ├─ 이벤트·알림·표시 작업 큐
+    ├─ HiperInterface 어댑터
+    └─ Frontend용 API/SSE 제공
+
+Frontend
+    ├─ 카메라 및 스트림 상태
+    ├─ 실시간 이벤트·알림
+    ├─ 검색·통계·스냅샷
+    ├─ 위험 이벤트 확인·해제
+    └─ Hiperwall 표시 상태 모니터링
+
+
+4. 저장소 구조
+
+cctv/
+├── backend/
+│   ├── src/cctv/
+│   │   ├── api/          # FastAPI 라우터
+│   │   ├── core/         # 설정, 로깅, 공통 예외
+│   │   ├── db/           # SQLite 연결, 스키마, 마이그레이션
+│   │   ├── models/       # 도메인 및 API 데이터 모델
+│   │   ├── media/        # 수신, 디코딩, 오버레이, 인코딩, RTSP 재송출
+│   │   ├── inference/    # 객체 검출과 추적
+│   │   ├── services/     # Hiperwall, 스토리지 등 외부 어댑터
+│   │   ├── workers/      # 파이프라인 조정, 작업 큐, 재시도·lease
+│   │   └── main.py
+│   ├── tests/
+│   ├── pyproject.toml
+│   ├── uv.lock
+│   ├── .python-version
+│   └── Dockerfile
+│
+├── frontend/
+│   ├── src/
+│   ├── public/
+│   ├── package.json
+│   └── Dockerfile
+│
+├── infra/
+│   ├── mediamtx/      # RTSP 중계 설정
+│   └── scripts/       # 개발·배포 보조 스크립트
+│
+├── artifacts/
+│   └── models/        # 외부에서 제공되는 모델 가중치(Git 제외)
+│
+├── docs/
+│   ├── OPEN_QUESTIONS.md              # 미정 사항의 단일 관리 문서
+│   ├── architecture/MEDIA_PIPELINE.md # 분석 영상 재송출 모듈 경계
+│   └── decisions/                     # 확정된 아키텍처 결정 기록
+├── samples/              # Git에 추가 가능한 작은 테스트 영상
+├── runtime/              # DB, 로그, 스냅샷, 임시 클립(Git 제외)
+├── .env.example
+├── .gitignore
+├── compose.yaml
+└── README.md
+
+저장소는 하나의 Git 저장소로 유지한다. Backend와 Frontend는 폴더로 분리한다. 현재는 미디어 파이프라인과 AI Worker를 Backend 코드베이스 안에 두되 API 요청 처리와는 독립된 프로세스로 실행한다. 부하 테스트 결과가 필요성을 보일 때만 video-worker 컨테이너로 분리한다.
+
+4.1 모델 아티팩트 관리
+
+- 모델 가중치는 artifacts/models에 두고 Git에 추가하지 않는다.
+- 모델 이름, 버전, 파일명, SHA-256, 입력 크기, 객체 클래스, 런타임, 라이선스를 기록한다.
+- 경로는 MODEL_PATH 환경변수로 지정하고 컨테이너에는 /models 읽기 전용으로 마운트한다.
+- 애플리케이션 시작 중에 모델을 암묵적으로 다운로드하지 않는다.
+
+4.2 분석 영상 재송출 경계
+
+- media 모듈은 RTSP 수신, 디코딩, 오버레이, 인코딩, 분석 RTSP 발행을 담당한다.
+- inference 모듈은 검출과 추적 결과를 표준화하여 media에 제공한다.
+- workers는 파이프라인 시작·종료와 내구성 작업 큐를 조정하지만 프레임 처리 코드를 소유하지 않는다.
+- API 요청 경로에서 디코딩이나 AI 추론을 직접 수행하지 않는다.
+- HiperInterface는 레이아웃을 제어하며 프레임 오버레이를 수행하지 않는다.
+
+4.3 미정 사항과 결정 기록
+
+- 아직 확정되지 않은 사항은 docs/OPEN_QUESTIONS.md에서만 관리한다.
+- 다른 문서는 미정 사항 목록을 복사하지 않고 해당 문서를 참조한다.
+- 직접 근거를 확보한 후 아키텍처 결정은 docs/decisions에 ADR로 기록한다.
+- OPEN, IN_PROGRESS, BLOCKED, DECIDED 상태와 담당자, 근거, 결정 문서 링크를 함께 관리한다.
+
+
+5. 초기 기술 스택
+
+Backend:
+
+- Python 3.12
+- uv 패키지/가상환경 관리
+- FastAPI + Uvicorn
+- Pydantic Settings
+- SQLite
+- HTTPX
+- pytest + Ruff
+
+영상/AI:
+
+- FFmpeg
+- OpenCV Headless
+- PyTorch
+- YOLO
+- 추적기는 ByteTrack 또는 BoT-SORT 후보
+- 개발 PC는 CPU 모드, 동작 테스트 PC는 CUDA 모드
+
+Frontend(후속 구축):
+
+- Node.js LTS
+- React + TypeScript + Vite 후보
+- API 호출 및 SSE 실시간 이벤트 표시
+
+실행/인프라:
+
+- Docker Engine
+- Docker Compose
+- MediaMTX RTSP 중계 후보
+- 로컬은 CPU 프로파일, 원격 서버는 GPU 프로파일로 분리
+
+
+6. Backend 주요 모듈
+
+6.1 API
+
+- GET /health: 프로세스, DB, 의존 서비스 상태
+- /api/cameras: 카메라 등록, 수정, 활성화, 연결 상태
+- /api/events: 객체 및 위험 이벤트 조회
+- /api/alerts: 알림 확인, 해제, 상태 변경
+- /api/streams: 스트림 상태와 테스트
+- /api/settings: 안전한 범위의 운영 설정
+- /api/events/stream: SSE 실시간 이벤트
+
+6.2 영상 수신
+
+- RTSP 연결·재연결·타임아웃
+- 메인 스트림과 분석용 서브스트림 분리
+- 프레임 버퍼 상한과 지연 방지
+- 프레임마다 저장하지 않고 요청된 FPS만 분석
+
+6.3 AI 분석
+
+- 입력 해상도와 detection FPS 설정
+- 객체 검출 결과 표준화
+- 카메라별 track_id 관리
+- CPU/CUDA 장치 자동 또는 명시적 선택
+- 모델과 임계치를 환경변수나 설정으로 분리
+
+6.4 규칙 엔진
+
+- 금지구역 침입
+- 일정 시간 이상 배회
+- 인원 임계치 초과
+- 선 통과 및 방향 판단
+- 차량 금지구역 진입
+- 카메라 가림, 정지, 연결 끊김
+
+6.5 Hiperwall 연동
+
+- HiperInterface 인증 및 연결 상태 확인
+- 컨텐츠 열기, 닫기, 배치, 크기 변경
+- 경보 라벨과 테두리 표시
+- 재시도, 지수 백오프, 마지막 오류 기록
+- 이벤트 종료 후 이전 레이아웃 복구
+- DRY RUN과 LIVE 모드 분리
+
+
+7. 초기 DB 설계
+
+초기에는 SQLite를 사용하며 다음 개념을 저장한다.
+
+- cameras: 카메라, 위치, RTSP 참조, 분석 설정
+- tracks: 카메라별 객체 추적 시작·종료·분류
+- object_counts: 시간 버킷별 객체 수
+- alerts: 위험 이벤트, 심각도, 발생·해제 시간
+- display_jobs: Hiperwall 표시 작업, 상태, 재시도, lease
+- display_instances: 현재 열려 있는 영상월 컨텐츠
+- job_attempts: 외부 호출 시도와 결과
+- schema_migrations: DB 스키마 버전
+
+프레임마다 객체를 저장하지 않고, track 시작·종료 이벤트와 1~5초 단위 집계를 저장한다.
+
+
+8. 설정과 보안 원칙
+
+- 비밀번호, RTSP 계정, API 키, Hiperwall 인증 정보를 코드에 직접 입력하지 않는다.
+- 실제 비밀값은 .env에 두고 Git에서 제외한다.
+- .env.example에는 키 이름과 예시 형식만 두고 실제 값은 넣지 않는다.
+- 로그에 RTSP URI의 비밀번호나 개인 정보를 남기지 않는다.
+- 외부 웹훅은 HMAC 서명, 타임스탬프 허용 오차, body 크기 제한을 검증한다.
+- API는 기본적으로 localhost에만 바인딩하고, 외부 공개가 필요할 때만 인증과 터널을 적용한다.
+- runtime 디렉터리의 DB, 로그, 스냅샷, 영상은 Git에 추가하지 않는다.
+
+
+9. 실행 모드
+
+APP_MODE=dry_run
+
+- DB와 로그에 이벤트를 기록한다.
+- Hiperwall에 실제 표시 명령을 보내지 않는다.
+- 개발과 자동화 테스트의 기본값으로 사용한다.
+
+APP_MODE=live
+
+- 사전에 허용된 이벤트와 카메라만 Hiperwall에 표시한다.
+- 인증, 매핑, 소스 상태가 모두 정상인 경우에만 외부 명령을 실행한다.
+
+AI_DEVICE=cpu
+
+- 현재 개발 PC의 기본값으로 사용한다.
+
+AI_DEVICE=cuda
+
+- NVIDIA GPU가 있는 동작 테스트 PC에서만 사용한다.
+
+
+10. MVP(최소 기능 제품) 범위
+
+1차 MVP:
+
+- Frontend/Backend/Infra 폴더 구조
+- FastAPI 서버와 GET /health
+- 환경변수 로딩과 구조화된 로깅
+- SQLite DB 생성과 기본 마이그레이션
+- Dockerfile과 compose.yaml
+- pytest, Ruff 기본 검증
+
+2차 MVP:
+
+- 로컬 영상 파일을 FFmpeg/OpenCV로 읽기
+- 샘플 프레임 스냅샷 저장
+- CPU 모드 YOLO 객체 검출
+- 검출 결과를 DB와 API에 노출
+
+3차 MVP:
+
+- RTSP 1채널 연결과 재연결
+- 객체 추적과 track 이벤트 저장
+- 간단한 침입 또는 선 통과 규칙
+- Hiperwall DRY RUN 작업 생성
+
+4차 MVP:
+
+- Hiperwall 실제 연동
+- 경보 발생 시 영상 자동 열기
+- 이벤트 종료 후 영상 닫기·복구
+- 기본 Frontend 관리 화면
+
+
+11. 초기 제외 범위
+
+다음 항목은 초기 MVP에 포함하지 않는다.
+
+- 50채널 동시 AI 분석
+- 30일 이상 원본 영상 보관
+- 여러 카메라 사이의 동일 인물 Re-ID
+- 얼굴 인식과 번호판 인식
+- 복잡한 권한 관리
+- 고가용성 클러스터
+- 운영용 대규모 DB 전환
+
+
+12. 테스트 전략
+
+단위 테스트:
+
+- 설정 로딩
+- 이벤트 정규화
+- 위험 규칙
+- Hiperwall XML 요청·응답 파싱
+- DB 저장과 상태 전이
+
+통합 테스트:
+
+- API + SQLite
+- 샘플 영상 + FFmpeg/OpenCV
+- 이벤트 + 작업 큐 + Hiperwall Mock
+- Docker Compose 기반 전체 기동
+
+동작 테스트 PC:
+
+- GPU 인식과 CUDA 추론
+- RTSP 채널별 연결 성공률
+- 평균·95백분위 처리 지연
+- CPU, RAM, GPU, VRAM, 네트워크 사용량
+- 장애 후 재연결과 작업 복구
+- 24시간 이상 연속 실행
+
+
+13. 현재 개발 환경 상태
+
+- WSL2 Ubuntu 26.04 LTS
+- 사용자: joohyeong
+- systemd 활성화
+- Python 3.12.14(uv 관리)
+- uv 0.12.5
+- Git 2.53.0
+- GCC 15.2.0 / Make 4.4.1
+- FFmpeg 8.0.1
+- SQLite 3.46.1
+- Docker Engine 29.7.2
+- Docker Compose 5.5.0
+- Docker 일반 사용자 권한 정상
+- 현재 개발 PC는 NVIDIA GPU 없음
+
+
+14. 바로 다음 작업
+
+완료된 기본 구조와 경계:
+
+- Frontend/Backend/Infra/Samples/Runtime 폴더 구조
+- Backend FastAPI 서버와 GET /health 기본 엔드포인트
+- Backend/Frontend Dockerfile과 루트 compose.yaml
+- artifacts/models 및 Git 제외 정책
+- backend/src/cctv/media 재송출 파이프라인 모듈 경계
+- docs/OPEN_QUESTIONS.md 단일 미정 사항 관리
+- docs/decisions ADR 템플릿
+
+다음 작업:
+
+1. docs/OPEN_QUESTIONS.md의 블로커에 담당자를 지정하고 DVR·Hiperwall 확인 시작
+2. 환경변수 로딩과 구조화된 로깅 구현
+3. SQLite DB 초기화와 첫 마이그레이션 구현
+4. pytest, Ruff, docker compose config 검증을 CI 명령으로 정리
+5. Frontend 기술 스택을 확정하고 임시 화면을 실제 관리 화면 뼈대로 교체
+6. MediaMTX 버전과 설정을 확정하고 compose.yaml에 RTSP 중계 서비스 추가
+7. 로컬 영상 1개로 디코딩·프레임 샘플링 스파이크 구현
+
+
+15. 미정 사항
+
+미정 사항의 정본은 WSL 프로젝트의 docs/OPEN_QUESTIONS.md다. 이 문서에는 개별 미정 사항 목록을 중복하지 않는다.
+
+- 실제 연동 전 블로커
+- 운영 용량 산정 전 확인 사항
+- 초기 범위 외 후속 결정
+
+각 항목은 고유 ID, 상태, 담당자, 근거, 결정 ADR 링크를 갖는다. 다른 문서는 docs/OPEN_QUESTIONS.md를 참조한다.
+
+
+16. 핵심 원칙
+
+- Hiperwall은 표시와 화면 제어를 담당한다.
+- Backend는 영상 수신, AI 분석, 저장, 검색, 위험 판단을 담당한다.
+- Frontend는 검색, 알림, 상태, 설정을 관리한다.
+- 원본 RTSP는 AI 서버와 Hiperwall에 안전하게 분기한다.
+- HiperInterface를 프레임별 객체 박스 표시에 사용하지 않는다.
+- 객체 박스가 필요하면 Backend에서 분석 영상을 별도 RTSP로 재송출한다.
+- 프레임 단위 전체 저장보다 track 이벤트와 시간 버킷 집계를 우선한다.
+- 개발 환경과 운영 환경의 차이는 환경변수와 Docker Compose 프로파일로 관리한다.
+- 초기에는 작게 구현하고 카메라 수를 늘리며 측정한다.
