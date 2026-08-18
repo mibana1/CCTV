@@ -26,6 +26,18 @@ from cctv.db.display_actions import (
     DisplayActionRecord,
     DisplayActionRepository,
 )
+from cctv.db.identities import (
+    DEFAULT_MODEL_VERSION,
+    MAX_EMBEDDING_DIMENSIONS,
+    MIN_EMBEDDING_DIMENSIONS,
+    IdentityEmbeddingPage,
+    IdentityEmbeddingRecord,
+    IdentityEmbeddingVector,
+    IdentityPage,
+    IdentityRecord,
+    IdentityRepository,
+    normalize_embedding,
+)
 from cctv.db.rules import (
     RuleEventPage,
     RuleEventRecord,
@@ -35,8 +47,11 @@ from cctv.db.rules import (
 )
 
 __all__ = [
+    "DEFAULT_MODEL_VERSION",
     "DEFAULT_PAGE_SIZE",
+    "MAX_EMBEDDING_DIMENSIONS",
     "MAX_PAGE_SIZE",
+    "MIN_EMBEDDING_DIMENSIONS",
     "AnalysisRunPage",
     "AnalysisRunRecord",
     "AnalysisRunStatus",
@@ -48,6 +63,12 @@ __all__ = [
     "DisplayActionPage",
     "DisplayActionRecord",
     "DisplayActionRepository",
+    "IdentityEmbeddingPage",
+    "IdentityEmbeddingRecord",
+    "IdentityEmbeddingVector",
+    "IdentityPage",
+    "IdentityRecord",
+    "IdentityRepository",
     "RuleEventPage",
     "RuleEventRecord",
     "RulePage",
@@ -60,4 +81,5 @@ __all__ = [
     "check_database_health",
     "connect_database",
     "initialize_database",
+    "normalize_embedding",
 ]

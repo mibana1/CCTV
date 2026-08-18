@@ -109,6 +109,42 @@ GET /detections?analysis_run_id={id}&class_name=person&min_confidence=0.5&page=1
 `/detections`의 클래스 이름은 대소문자를 구분하지 않는 완전 일치 방식입니다.
 현재 API에는 사용자 인증이 없으므로 로컬 검증 네트워크 밖에 공개하지 마십시오.
 
+## 인물 등록 및 임베딩
+
+인물 프로필과 얼굴 임베딩은 분리해 저장합니다. 한 인물에 여러 등록 샘플과 여러
+모델 버전의 임베딩을 연결할 수 있으며, 모델명·버전·차원이 일치하는 벡터만 향후
+매칭 후보로 불러올 수 있습니다. 입력 벡터는 유한값과 차원(2..4096)을 검증한 뒤
+L2 정규화된 little-endian float32 BLOB으로 저장하고 SHA-256을 함께 기록합니다.
+API 응답에는 원본 벡터를 반환하지 않습니다.
+
+```text
+POST   /identities
+GET    /identities?query=EMP-001&enabled=true&page=1&limit=50
+GET    /identities/{identity_id}
+PATCH  /identities/{identity_id}
+DELETE /identities/{identity_id}
+
+POST   /identities/{identity_id}/embeddings
+GET    /identities/{identity_id}/embeddings?model_name=arcface&model_version=1.0
+DELETE /identities/{identity_id}/embeddings/{embedding_id}
+```
+
+```json
+POST /identities/{identity_id}/embeddings
+{
+  "model_name": "arcface",
+  "model_version": "1.0",
+  "vector": [0.12, -0.34, 0.56],
+  "source_reference": "registration-image-1",
+  "quality_score": 0.93
+}
+```
+
+현재 단계는 외부 임베딩 추출기가 만든 벡터를 등록·관리하는 모델 독립 저장/API
+계층입니다. 이미지 업로드, 얼굴 검출·임베딩 추출 모델, 실시간 유사도 매칭은 아직
+연결하지 않았습니다. 임베딩은 생체정보이므로 실제 운영에서는 API 인증·권한,
+전송 암호화, SQLite 파일 암호화 또는 접근 통제와 보존·삭제 정책을 추가해야 합니다.
+
 ## 규칙 엔진
 
 `CCTV_RULES_ENABLED=true`(기본값), 객체 추적, 검출 저장이 모두 활성화된 분석
