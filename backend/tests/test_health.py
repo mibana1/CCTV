@@ -44,3 +44,11 @@ def test_health_initializes_database(tmp_path: Path) -> None:
     assert request_record["http_path"] == "/health"
     assert request_record["status_code"] == 200
     assert request_record["duration_ms"] >= 0
+
+    startup_record = next(
+        record for record in log_records if record["event"] == "application_starting"
+    )
+    assert startup_record["app_env"] == "test"
+    assert startup_record["app_mode"] == "dry_run"
+    assert startup_record["ai_device"] == "cpu"
+    assert startup_record["analysis_fps"] == 2

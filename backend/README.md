@@ -21,3 +21,9 @@ uv run cctv
 마스킹됩니다. HTTP 요청 로그에는 method, path, status code, duration이
 구조화 필드로 기록되며 query string과 header는 기록하지 않습니다. 실제
 자격증명을 메시지 문자열에 직접 넣지 마십시오.
+
+실행 모드는 기본 `dry_run`이며 외부 부작용을 허용하지 않습니다. Hiperwall
+어댑터 등 외부 작업 경계에서는 `external_action_allowed()`를 호출해야 하며,
+차단된 작업은 `external_action_skipped` 이벤트로 기록됩니다. CPU와 분석 FPS가
+기본값이고, LIVE 모드는 Hiperwall 주소와 선택된 인증 방식의 필수값을 검증한
+후에만 시작됩니다.

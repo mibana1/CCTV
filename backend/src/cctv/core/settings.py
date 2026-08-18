@@ -1,15 +1,30 @@
 """Application settings loaded from environment variables and the project .env file."""
 
+from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _BACKEND_ROOT = Path(__file__).resolve().parents[3]
 PROJECT_ROOT = _BACKEND_ROOT.parent if _BACKEND_ROOT.name.casefold() == "backend" else _BACKEND_ROOT
 ENV_FILE = PROJECT_ROOT / ".env"
+
+
+class AppMode(StrEnum):
+    """Whether external side effects are simulated or executed."""
+
+    DRY_RUN = "dry_run"
+    LIVE = "live"
+
+
+class AiDevice(StrEnum):
+    """Inference device requested by the analysis worker."""
+
+    CPU = "cpu"
+    CUDA = "cuda"
 
 
 class Settings(BaseSettings):
@@ -30,6 +45,9 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
+    app_mode: AppMode = AppMode.DRY_RUN
+    ai_device: AiDevice = AiDevice.CPU
+    analysis_fps: float = Field(default=2.0, gt=0, le=30)
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"
@@ -64,6 +82,12 @@ class Settings(BaseSettings):
             raise ValueError("log level must be CRITICAL, ERROR, WARNING, INFO, or DEBUG")
         return normalized
 
+    @field_validator("app_mode", "ai_device", mode="before")
+    @classmethod
+    def normalize_execution_mode(cls, value: object) -> object:
+        """Accept case-insensitive execution mode and device values."""
+        return value.lower() if isinstance(value, str) else value
+
     @field_validator("hiperwall_auth_mode", mode="before")
     @classmethod
     def normalize_auth_mode(cls, value: object) -> object:
@@ -75,6 +99,24 @@ class Settings(BaseSettings):
     def resolve_project_path(cls, value: Path) -> Path:
         """Resolve relative runtime paths from the repository root."""
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
+
+    @model_validator(mode="after")
+    def validate_live_mode(self) -> Self:
+        """Fail closed when LIVE mode lacks required Hiperwall configuration."""
+        if self.app_mode is not AppMode.LIVE:
+            return self
+        if not self.hiperwall_base_url:
+            raise ValueError("HIPERWALL_BASE_URL is required when CCTV_APP_MODE=live")
+        if self.hiperwall_auth_mode == "token" and (
+            self.hiperwall_token is None or not self.hiperwall_token.get_secret_value()
+        ):
+            raise ValueError("HIPERWALL_TOKEN is required for token authentication in live mode")
+        return self
+
+    @property
+    def external_actions_enabled(self) -> bool:
+        """Report whether external side effects may be executed."""
+        return self.app_mode is AppMode.LIVE
 
 
 @lru_cache(maxsize=1)

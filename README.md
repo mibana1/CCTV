@@ -47,6 +47,18 @@ Backend 애플리케이션 로그는 stdout과 `runtime/logs/cctv.jsonl`에 JSON
 있습니다. RTSP 사용자정보, 비밀번호, Token, Authorization, Cookie와 인증
 XML 필드는 로그 출력 전에 마스킹됩니다.
 
+## 실행 모드
+
+기본 실행 모드는 `CCTV_APP_MODE=dry_run`, `CCTV_AI_DEVICE=cpu`,
+`CCTV_ANALYSIS_FPS=2`입니다. DRY RUN은 영상 처리와 DB·로그 기록은 허용하지만
+Hiperwall 같은 외부 시스템의 실제 변경 작업은 차단합니다. 외부 어댑터는
+반드시 `cctv.core.execution.external_action_allowed`를 통과해야 합니다.
+
+`CCTV_APP_MODE=live`는 `HIPERWALL_BASE_URL`이 있어야 하며, 인증 모드가
+`token`이면 비어 있지 않은 `HIPERWALL_TOKEN`도 필요합니다. 조건이 맞지
+않으면 설정 검증 단계에서 애플리케이션 시작이 실패합니다. CUDA 장치의 실제
+사용 가능 여부는 추론 Worker 구현 단계에서 별도로 검사합니다.
+
 ## Docker 시작
 
 저장소 루트에서 다음을 실행합니다.

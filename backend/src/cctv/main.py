@@ -33,6 +33,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             extra={
                 "event": "application_starting",
                 "app_env": application_settings.app_env,
+                "app_mode": application_settings.app_mode,
+                "ai_device": application_settings.ai_device,
+                "analysis_fps": application_settings.analysis_fps,
             },
         )
         try:

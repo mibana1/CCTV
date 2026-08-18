@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cctv.core.settings import Settings
+from cctv.core.settings import AiDevice, AppMode, Settings
 
 
 def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> None:
@@ -12,6 +12,9 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     log_path = tmp_path / "logs" / "test.jsonl"
 
     monkeypatch.setenv("CCTV_APP_ENV", "test")
+    monkeypatch.setenv("CCTV_APP_MODE", "LIVE")
+    monkeypatch.setenv("CCTV_AI_DEVICE", "CUDA")
+    monkeypatch.setenv("CCTV_ANALYSIS_FPS", "5")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
     monkeypatch.setenv("CCTV_LOG_LEVEL", "debug")
@@ -22,10 +25,15 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_MODEL_PATH", str(model_path))
     monkeypatch.setenv("HIPERWALL_AUTH_MODE", "TOKEN")
     monkeypatch.setenv("HIPERWALL_TOKEN", "test-token")
+    monkeypatch.setenv("HIPERWALL_BASE_URL", "http://hiperwall-host:8000")
 
     settings = Settings(_env_file=None)
 
     assert settings.app_env == "test"
+    assert settings.app_mode is AppMode.LIVE
+    assert settings.ai_device is AiDevice.CUDA
+    assert settings.analysis_fps == 5
+    assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
     assert settings.log_level == "DEBUG"
@@ -56,3 +64,49 @@ def test_settings_load_explicit_env_file(tmp_path: Path) -> None:
 def test_settings_reject_invalid_log_level() -> None:
     with pytest.raises(ValidationError, match="log level must be"):
         Settings(_env_file=None, log_level="verbose")
+
+
+def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
+    for variable in ("CCTV_APP_MODE", "CCTV_AI_DEVICE", "CCTV_ANALYSIS_FPS"):
+        monkeypatch.delenv(variable, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.app_mode is AppMode.DRY_RUN
+    assert settings.ai_device is AiDevice.CPU
+    assert settings.analysis_fps == 2
+    assert settings.external_actions_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("app_mode", "staging"),
+        ("ai_device", "gpu"),
+        ("analysis_fps", 0),
+        ("analysis_fps", 31),
+    ],
+)
+def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, **{field: value})
+
+
+def test_settings_live_mode_requires_hyperwall_url() -> None:
+    with pytest.raises(ValidationError, match="HIPERWALL_BASE_URL is required"):
+        Settings(
+            _env_file=None,
+            app_mode="live",
+            hiperwall_base_url=None,
+        )
+
+
+def test_settings_live_token_mode_requires_token() -> None:
+    with pytest.raises(ValidationError, match="HIPERWALL_TOKEN is required"):
+        Settings(
+            _env_file=None,
+            app_mode="live",
+            hiperwall_base_url="http://hiperwall-host:8000",
+            hiperwall_auth_mode="token",
+            hiperwall_token=None,
+        )
