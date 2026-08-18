@@ -30,6 +30,14 @@ class DatabaseState:
     applied_migrations: tuple[int, ...]
 
 
+@dataclass(frozen=True)
+class DatabaseHealth:
+    """Current read-only health information for the SQLite database."""
+
+    schema_version: int
+    journal_mode: str
+
+
 def connect_database(database_path: Path) -> sqlite3.Connection:
     """Open a configured SQLite connection and create its parent directory."""
     path = Path(database_path)
@@ -41,6 +49,30 @@ def connect_database(database_path: Path) -> sqlite3.Connection:
     connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     connection.execute("PRAGMA journal_mode = WAL")
     return connection
+
+
+def check_database_health(database_path: Path) -> DatabaseHealth:
+    """Verify that the configured SQLite database can be queried without mutating it."""
+    path = Path(database_path).resolve()
+    database_uri = f"{path.as_uri()}?mode=ro"
+
+    with closing(
+        sqlite3.connect(
+            database_uri,
+            timeout=SQLITE_BUSY_TIMEOUT_MS / 1_000,
+            uri=True,
+        )
+    ) as connection:
+        connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+        connection.execute("PRAGMA query_only = ON")
+        connection.execute("SELECT 1").fetchone()
+        schema_version = int(connection.execute("PRAGMA user_version").fetchone()[0])
+        journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+
+    return DatabaseHealth(
+        schema_version=schema_version,
+        journal_mode=journal_mode,
+    )
 
 
 def initialize_database(database_path: Path) -> DatabaseState:

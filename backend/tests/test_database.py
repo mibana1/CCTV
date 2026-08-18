@@ -2,7 +2,9 @@ import sqlite3
 from contextlib import closing
 from pathlib import Path
 
-from cctv.db import connect_database, initialize_database
+import pytest
+
+from cctv.db import check_database_health, connect_database, initialize_database
 
 
 def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) -> None:
@@ -41,3 +43,22 @@ def test_connect_database_returns_rows_by_column_name(tmp_path: Path) -> None:
 
     assert isinstance(row, sqlite3.Row)
     assert dict(row) == {"id": 1, "name": "Test camera", "enabled": 1}
+
+
+def test_check_database_health_reads_current_database_state(tmp_path: Path) -> None:
+    database_path = tmp_path / "cctv.db"
+    initialize_database(database_path)
+
+    health = check_database_health(database_path)
+
+    assert health.schema_version == 1
+    assert health.journal_mode == "wal"
+
+
+def test_check_database_health_does_not_create_a_missing_database(tmp_path: Path) -> None:
+    database_path = tmp_path / "missing.db"
+
+    with pytest.raises(sqlite3.OperationalError):
+        check_database_health(database_path)
+
+    assert not database_path.exists()

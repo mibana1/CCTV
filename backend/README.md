@@ -27,3 +27,24 @@ uv run cctv
 차단된 작업은 `external_action_skipped` 이벤트로 기록됩니다. CPU와 분석 FPS가
 기본값이고, LIVE 모드는 Hiperwall 주소와 선택된 인증 방식의 필수값을 검증한
 후에만 시작됩니다.
+
+`GET /health`는 API 버전, 환경, 실행 모드와 SQLite 읽기 가능 여부, 스키마
+버전, journal mode를 반환합니다. SQLite를 읽을 수 없으면 민감한 파일 경로나
+오류 메시지를 응답에 포함하지 않고 HTTP 503과 `health_check_failed` 로그를
+기록합니다. Hiperwall과 영상 중계 상태는 해당 어댑터가 구현될 때 점검 항목에
+추가합니다.
+
+로컬 영상은 `LocalVideoDecoder`로 API 요청 경로 밖에서 디코딩합니다. 디코더는
+원본 프레임 인덱스와 타임스탬프를 유지하면서 `sample_fps`에 맞는 프레임만
+전달하고, 원본 FPS가 더 낮을 때 프레임을 복제하지 않습니다. 프리페치 큐를
+만들지 않아 한 번에 현재 프레임만 보유하며 컨텍스트 종료 시 OpenCV 자원을
+반드시 해제합니다.
+
+```python
+from cctv.media import LocalVideoDecoder
+
+with LocalVideoDecoder("sample.mp4", sample_fps=2) as decoder:
+    print(decoder.metadata)
+    for frame in decoder.frames():
+        analyze(frame.image, frame.timestamp_seconds)
+```
