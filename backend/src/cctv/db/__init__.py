@@ -29,7 +29,9 @@ from cctv.db.display_actions import (
 from cctv.db.identities import (
     DEFAULT_MODEL_VERSION,
     MAX_EMBEDDING_DIMENSIONS,
+    MAX_EMBEDDINGS_PER_BATCH,
     MIN_EMBEDDING_DIMENSIONS,
+    IdentityEmbeddingInput,
     IdentityEmbeddingPage,
     IdentityEmbeddingRecord,
     IdentityEmbeddingVector,
@@ -49,6 +51,7 @@ from cctv.db.rules import (
 __all__ = [
     "DEFAULT_MODEL_VERSION",
     "DEFAULT_PAGE_SIZE",
+    "MAX_EMBEDDINGS_PER_BATCH",
     "MAX_EMBEDDING_DIMENSIONS",
     "MAX_PAGE_SIZE",
     "MIN_EMBEDDING_DIMENSIONS",
@@ -63,6 +66,7 @@ __all__ = [
     "DisplayActionPage",
     "DisplayActionRecord",
     "DisplayActionRepository",
+    "IdentityEmbeddingInput",
     "IdentityEmbeddingPage",
     "IdentityEmbeddingRecord",
     "IdentityEmbeddingVector",

@@ -75,9 +75,19 @@ class Settings(BaseSettings):
     log_backup_count: int = Field(default=5, ge=0, le=100)
     snapshot_dir: Path = Path("runtime/snapshots")
     snapshot_jpeg_quality: int = Field(default=90, ge=1, le=100)
+    identity_photo_dir: Path = Path("runtime/identity_images")
 
     database_path: Path = Path("runtime/cctv.db")
     model_path: Path = Path("artifacts/models/model.onnx")
+    face_detection_model_path: Path = Path(
+        "artifacts/models/face/face_detection_yunet_2026may.onnx"
+    )
+    face_embedding_model_path: Path = Path(
+        "artifacts/models/face/face_recognition_sface_2021dec.onnx"
+    )
+    face_detection_score_threshold: float = Field(default=0.9, gt=0, le=1)
+    face_detection_nms_threshold: float = Field(default=0.3, ge=0, le=1)
+    face_detection_top_k: int = Field(default=5_000, ge=1, le=100_000)
     model_classes_path: Path | None = None
     local_video_path: Path | None = None
     rtsp_input_url: str | None = None
@@ -137,7 +147,15 @@ class Settings(BaseSettings):
             )
         return normalized
 
-    @field_validator("database_path", "model_path", "log_path", "snapshot_dir")
+    @field_validator(
+        "database_path",
+        "model_path",
+        "log_path",
+        "snapshot_dir",
+        "identity_photo_dir",
+        "face_detection_model_path",
+        "face_embedding_model_path",
+    )
     @classmethod
     def resolve_project_path(cls, value: Path) -> Path:
         """Resolve relative runtime paths from the repository root."""

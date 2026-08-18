@@ -140,10 +140,37 @@ POST /identities/{identity_id}/embeddings
 }
 ```
 
-현재 단계는 외부 임베딩 추출기가 만든 벡터를 등록·관리하는 모델 독립 저장/API
-계층입니다. 이미지 업로드, 얼굴 검출·임베딩 추출 모델, 실시간 유사도 매칭은 아직
-연결하지 않았습니다. 임베딩은 생체정보이므로 실제 운영에서는 API 인증·권한,
-전송 암호화, SQLite 파일 암호화 또는 접근 통제와 보존·삭제 정책을 추가해야 합니다.
+등록 사진은 `CCTV_IDENTITY_PHOTO_DIR/<external_id-or-identity-id>` 아래에 JPG 또는
+PNG 형식으로 3~5장을 둡니다. `cctv-register-faces`는 모든 사진에서 정확히 한 명의
+얼굴을 YuNet으로 검출하고 5개 랜드마크로 정렬한 뒤 SFace 2021dec의 128차원
+임베딩을 생성합니다. 사진 하나라도 읽을 수 없거나 얼굴이 없거나 두 명 이상이면
+아무 임베딩도 저장하지 않습니다. 모든 추출이 성공한 경우에만 한 트랜잭션으로
+저장하며 사진 원본과 임베딩 벡터는 출력하지 않습니다.
+
+```text
+runtime/identity_images/EMP-001/
+├── 01_front.jpg
+├── 02_left.jpg
+└── 03_right.jpg
+```
+
+```bash
+# 로컬 개발 환경
+cd backend
+uv run cctv-register-faces {identity_id}
+
+# Compose의 /runtime, /models 마운트 사용
+docker compose run --rm backend \
+  uv run --no-sync cctv-register-faces {identity_id}
+```
+
+기본 모델 파일은 각각
+`artifacts/models/face/face_detection_yunet_2026may.onnx`와
+`artifacts/models/face/face_recognition_sface_2021dec.onnx`에 명시적으로 설치해야
+하며 애플리케이션이 실행 중 자동 다운로드하지 않습니다. 현재 등록 파이프라인은
+구현됐지만 RTSP 프레임의 실시간 얼굴 매칭은 아직 연결하지 않았습니다. 임베딩은
+생체정보이므로 실제 운영에서는 API 인증·권한, 전송 암호화, SQLite 파일 암호화
+또는 접근 통제와 보존·삭제 정책을 추가해야 합니다.
 
 ## 규칙 엔진
 

@@ -11,6 +11,9 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     model_path = tmp_path / "models" / "test.onnx"
     local_video_path = tmp_path / "samples" / "test.mp4"
     snapshot_dir = tmp_path / "snapshots"
+    identity_photo_dir = tmp_path / "identity-images"
+    face_detection_model_path = tmp_path / "models" / "yunet.onnx"
+    face_embedding_model_path = tmp_path / "models" / "sface.onnx"
     model_classes_path = tmp_path / "models" / "classes.txt"
     log_path = tmp_path / "logs" / "test.jsonl"
 
@@ -45,6 +48,12 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_LOCAL_VIDEO_PATH", str(local_video_path))
     monkeypatch.setenv("CCTV_SNAPSHOT_DIR", str(snapshot_dir))
     monkeypatch.setenv("CCTV_SNAPSHOT_JPEG_QUALITY", "95")
+    monkeypatch.setenv("CCTV_IDENTITY_PHOTO_DIR", str(identity_photo_dir))
+    monkeypatch.setenv("CCTV_FACE_DETECTION_MODEL_PATH", str(face_detection_model_path))
+    monkeypatch.setenv("CCTV_FACE_EMBEDDING_MODEL_PATH", str(face_embedding_model_path))
+    monkeypatch.setenv("CCTV_FACE_DETECTION_SCORE_THRESHOLD", "0.8")
+    monkeypatch.setenv("CCTV_FACE_DETECTION_NMS_THRESHOLD", "0.2")
+    monkeypatch.setenv("CCTV_FACE_DETECTION_TOP_K", "1000")
     monkeypatch.setenv("CCTV_RTSP_INPUT_URL", "rtsp://user:password@camera:554/stream")
     monkeypatch.setenv("CCTV_RTSP_WORKER_URL", "rtsp://mediamtx:8554/camera")
     monkeypatch.setenv("CCTV_RTSP_SOURCE_NAME", "camera-1")
@@ -94,6 +103,12 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.local_video_path == local_video_path
     assert settings.snapshot_dir == snapshot_dir
     assert settings.snapshot_jpeg_quality == 95
+    assert settings.identity_photo_dir == identity_photo_dir
+    assert settings.face_detection_model_path == face_detection_model_path
+    assert settings.face_embedding_model_path == face_embedding_model_path
+    assert settings.face_detection_score_threshold == 0.8
+    assert settings.face_detection_nms_threshold == 0.2
+    assert settings.face_detection_top_k == 1_000
     assert settings.rtsp_input_url == "rtsp://user:password@camera:554/stream"
     assert settings.rtsp_worker_url == "rtsp://mediamtx:8554/camera"
     assert settings.rtsp_source_name == "camera-1"
@@ -194,6 +209,9 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("tracker_max_idle_seconds", 0),
         ("snapshot_jpeg_quality", 0),
         ("snapshot_jpeg_quality", 101),
+        ("face_detection_score_threshold", 0),
+        ("face_detection_nms_threshold", 1.1),
+        ("face_detection_top_k", 0),
     ],
 )
 def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:

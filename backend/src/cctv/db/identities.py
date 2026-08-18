@@ -21,6 +21,7 @@ from cctv.db.detections import DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE
 MIN_EMBEDDING_DIMENSIONS = 2
 MAX_EMBEDDING_DIMENSIONS = 4096
 DEFAULT_MODEL_VERSION = "unspecified"
+MAX_EMBEDDINGS_PER_BATCH = 100
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +53,18 @@ class IdentityEmbeddingRecord:
     source_reference: str | None
     quality_score: float | None
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityEmbeddingInput:
+    """One model output prepared for atomic registration."""
+
+    model_name: str
+    vector: Sequence[float]
+    model_version: str = DEFAULT_MODEL_VERSION
+    source_reference: str | None = None
+    quality_score: float | None = None
+    embedding_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,10 +244,33 @@ class IdentityRepository:
         quality_score: float | None = None,
         embedding_id: str | None = None,
     ) -> IdentityEmbeddingRecord:
-        normalized_vector = normalize_embedding(vector)
-        vector_blob = _pack_vector(normalized_vector)
-        identifier = embedding_id or str(uuid4())
-        normalized_quality = _quality_score(quality_score)
+        return self.add_embeddings(
+            identity_id,
+            (
+                IdentityEmbeddingInput(
+                    model_name=model_name,
+                    model_version=model_version,
+                    vector=vector,
+                    source_reference=source_reference,
+                    quality_score=quality_score,
+                    embedding_id=embedding_id,
+                ),
+            ),
+        )[0]
+
+    def add_embeddings(
+        self,
+        identity_id: str,
+        embeddings: Sequence[IdentityEmbeddingInput],
+    ) -> tuple[IdentityEmbeddingRecord, ...]:
+        """Validate and insert a bounded embedding batch in one transaction."""
+        if not embeddings:
+            raise ValueError("at least one embedding is required")
+        if len(embeddings) > MAX_EMBEDDINGS_PER_BATCH:
+            raise ValueError(
+                f"no more than {MAX_EMBEDDINGS_PER_BATCH} embeddings may be added at once"
+            )
+        prepared = tuple(_prepare_embedding(item) for item in embeddings)
 
         with closing(connect_database(self.database_path)) as connection, connection:
             identity = connection.execute(
@@ -243,32 +279,36 @@ class IdentityRepository:
             ).fetchone()
             if identity is None:
                 raise LookupError(f"identity does not exist: {identity_id}")
-            connection.execute(
-                """
-                INSERT INTO identity_embeddings (
-                    id, identity_id, model_name, model_version, dimension,
-                    embedding_sha256, vector_blob, source_reference, quality_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    identifier,
-                    identity_id,
-                    _required_text(model_name, "model_name"),
-                    _required_text(model_version, "model_version"),
-                    len(normalized_vector),
-                    hashlib.sha256(vector_blob).hexdigest(),
-                    vector_blob,
-                    _optional_text(source_reference, "source_reference"),
-                    normalized_quality,
-                ),
+            for item in prepared:
+                connection.execute(
+                    """
+                    INSERT INTO identity_embeddings (
+                        id, identity_id, model_name, model_version, dimension,
+                        embedding_sha256, vector_blob, source_reference, quality_score
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        item.id,
+                        identity_id,
+                        item.model_name,
+                        item.model_version,
+                        item.dimension,
+                        item.embedding_sha256,
+                        item.vector_blob,
+                        item.source_reference,
+                        item.quality_score,
+                    ),
+                )
+            rows = tuple(
+                connection.execute(
+                    "SELECT * FROM identity_embeddings WHERE id = ?",
+                    (item.id,),
+                ).fetchone()
+                for item in prepared
             )
-            row = connection.execute(
-                "SELECT * FROM identity_embeddings WHERE id = ?",
-                (identifier,),
-            ).fetchone()
-        if row is None:
-            raise RuntimeError("identity embedding was not created")
-        return _embedding_from_row(row)
+        if any(row is None for row in rows):
+            raise RuntimeError("one or more identity embeddings could not be loaded")
+        return tuple(_embedding_from_row(row) for row in rows if row is not None)
 
     def get_embedding(self, embedding_id: str) -> IdentityEmbeddingRecord | None:
         with closing(connect_database(self.database_path)) as connection:
@@ -411,6 +451,33 @@ def normalize_embedding(values: Collection[float]) -> tuple[float, ...]:
     return tuple(value / norm for value in vector)
 
 
+@dataclass(frozen=True, slots=True)
+class _PreparedEmbedding:
+    id: str
+    model_name: str
+    model_version: str
+    dimension: int
+    embedding_sha256: str
+    vector_blob: bytes
+    source_reference: str | None
+    quality_score: float | None
+
+
+def _prepare_embedding(item: IdentityEmbeddingInput) -> _PreparedEmbedding:
+    normalized_vector = normalize_embedding(item.vector)
+    vector_blob = _pack_vector(normalized_vector)
+    return _PreparedEmbedding(
+        id=item.embedding_id or str(uuid4()),
+        model_name=_required_text(item.model_name, "model_name"),
+        model_version=_required_text(item.model_version, "model_version"),
+        dimension=len(normalized_vector),
+        embedding_sha256=hashlib.sha256(vector_blob).hexdigest(),
+        vector_blob=vector_blob,
+        source_reference=_optional_text(item.source_reference, "source_reference"),
+        quality_score=_quality_score(item.quality_score),
+    )
+
+
 def _pack_vector(vector: Sequence[float]) -> bytes:
     return struct.pack(f"<{len(vector)}f", *vector)
 
@@ -528,8 +595,10 @@ def _validate_pagination(page: int, limit: int) -> None:
 
 __all__ = [
     "DEFAULT_MODEL_VERSION",
+    "MAX_EMBEDDINGS_PER_BATCH",
     "MAX_EMBEDDING_DIMENSIONS",
     "MIN_EMBEDDING_DIMENSIONS",
+    "IdentityEmbeddingInput",
     "IdentityEmbeddingPage",
     "IdentityEmbeddingRecord",
     "IdentityEmbeddingVector",
