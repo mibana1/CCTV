@@ -1,9 +1,11 @@
 """Application settings loaded from environment variables and the project .env file."""
 
+import re
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -52,6 +54,7 @@ class Settings(BaseSettings):
     yolo_input_size: int = Field(default=640, ge=32, le=4096)
     yolo_confidence_threshold: float = Field(default=0.25, gt=0, le=1)
     yolo_nms_threshold: float = Field(default=0.45, ge=0, le=1)
+    persist_detections: bool = True
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"
@@ -66,6 +69,15 @@ class Settings(BaseSettings):
     model_classes_path: Path | None = None
     local_video_path: Path | None = None
     rtsp_input_url: str | None = None
+    rtsp_worker_url: str = "rtsp://127.0.0.1:8554/camera"
+    rtsp_source_name: str = "camera"
+    rtsp_open_timeout_seconds: float = Field(default=10, gt=0, le=120)
+    rtsp_read_timeout_seconds: float = Field(default=10, gt=0, le=120)
+    rtsp_reconnect_initial_seconds: float = Field(default=1, gt=0, le=60)
+    rtsp_reconnect_max_seconds: float = Field(default=30, gt=0, le=300)
+    rtsp_reconnect_jitter_ratio: float = Field(default=0.2, ge=0, le=1)
+    rtsp_max_retries: int = Field(default=20, ge=0, le=10_000)
+    rtsp_max_samples: int | None = Field(default=None, ge=1)
     restream_url: str = "rtsp://127.0.0.1:8554/analyzed"
 
     hiperwall_base_url: str | None = Field(
@@ -108,10 +120,10 @@ class Settings(BaseSettings):
         """Resolve relative runtime paths from the repository root."""
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
 
-    @field_validator("local_video_path", "model_classes_path", mode="before")
+    @field_validator("local_video_path", "model_classes_path", "rtsp_input_url", mode="before")
     @classmethod
-    def normalize_optional_path(cls, value: object) -> object:
-        """Treat empty optional path environment variables as unset."""
+    def normalize_optional_value(cls, value: object) -> object:
+        """Treat empty optional environment variables as unset."""
         return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("local_video_path", "model_classes_path")
@@ -122,9 +134,36 @@ class Settings(BaseSettings):
             return value
         return (PROJECT_ROOT / value).resolve()
 
+    @field_validator("rtsp_input_url", "rtsp_worker_url", "restream_url")
+    @classmethod
+    def validate_rtsp_url(cls, value: str | None) -> str | None:
+        """Require an RTSP(S) URL with a host without exposing its credentials."""
+        if value is None:
+            return None
+        parsed = urlsplit(value)
+        if parsed.scheme.casefold() not in {"rtsp", "rtsps"} or not parsed.hostname:
+            raise ValueError("RTSP URL must use rtsp:// or rtsps:// and include a host")
+        return value
+
+    @field_validator("rtsp_source_name")
+    @classmethod
+    def validate_rtsp_source_name(cls, value: str) -> str:
+        """Keep the public source label safe for logs, paths, and database rows."""
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", normalized):
+            raise ValueError(
+                "RTSP source name must be 1-64 letters, numbers, dots, underscores, or hyphens"
+            )
+        return normalized
+
     @model_validator(mode="after")
     def validate_live_mode(self) -> Self:
         """Fail closed when LIVE mode lacks required Hiperwall configuration."""
+        if self.rtsp_reconnect_max_seconds < self.rtsp_reconnect_initial_seconds:
+            raise ValueError(
+                "CCTV_RTSP_RECONNECT_MAX_SECONDS must be greater than or equal to "
+                "CCTV_RTSP_RECONNECT_INITIAL_SECONDS"
+            )
         if self.app_mode is not AppMode.LIVE:
             return self
         if not self.hiperwall_base_url:

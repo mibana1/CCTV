@@ -14,19 +14,36 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 1
-    assert first.applied_migrations == (1,)
-    assert second.schema_version == 1
+    assert first.schema_version == 2
+    assert first.applied_migrations == (1, 2)
+    assert second.schema_version == 2
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
-        migration = connection.execute("SELECT version, name FROM schema_migrations").fetchone()
+        migrations = connection.execute(
+            "SELECT version, name FROM schema_migrations ORDER BY version"
+        ).fetchall()
         camera_table = connection.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cameras'"
         ).fetchone()
 
-        assert dict(migration) == {"version": 1, "name": "initial_camera_schema"}
+        detection_tables = {
+            row["name"]
+            for row in connection.execute(
+                """
+                SELECT name FROM sqlite_master
+                WHERE type = 'table'
+                    AND name IN ('analysis_runs', 'analyzed_frames', 'detections')
+                """
+            )
+        }
+
+        assert [dict(migration) for migration in migrations] == [
+            {"version": 1, "name": "initial_camera_schema"},
+            {"version": 2, "name": "detection_result_schema"},
+        ]
         assert camera_table["name"] == "cameras"
+        assert detection_tables == {"analysis_runs", "analyzed_frames", "detections"}
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert connection.execute("PRAGMA busy_timeout").fetchone()[0] == 5_000
@@ -51,7 +68,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 1
+    assert health.schema_version == 2
     assert health.journal_mode == "wal"
 
 

@@ -16,6 +16,13 @@ from cctv.media.decode import (
     VideoMetadata,
     iter_local_video_frames,
 )
+from cctv.media.ingest import (
+    RawRtspFrame,
+    RtspConnectionError,
+    RtspIngestError,
+    RtspIngestStatistics,
+    RtspStreamReader,
+)
 from cctv.media.snapshot import (
     SnapshotEncodingError,
     SnapshotError,
@@ -31,6 +38,11 @@ __all__ = [
     "LocalVideoDecoder",
     "LocalVideoError",
     "LocalVideoOpenError",
+    "RawRtspFrame",
+    "RtspConnectionError",
+    "RtspIngestError",
+    "RtspIngestStatistics",
+    "RtspStreamReader",
     "SnapshotEncodingError",
     "SnapshotError",
     "SnapshotRecord",

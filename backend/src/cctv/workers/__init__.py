@@ -13,11 +13,15 @@ from cctv.workers.local_video import (
     WorkerStatus,
     WorkerStopReason,
 )
+from cctv.workers.rtsp import RtspStopReason, RtspWorker, RtspWorkerResult
 
 __all__ = [
     "FrameConsumer",
     "LocalVideoWorker",
     "LocalVideoWorkerResult",
+    "RtspStopReason",
+    "RtspWorker",
+    "RtspWorkerResult",
     "SequentialFrameConsumer",
     "WorkerStatus",
     "WorkerStopReason",

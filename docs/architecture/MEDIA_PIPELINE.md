@@ -16,6 +16,18 @@ RTSP source
   -> HiperSource IP Streams
 ```
 
+## Current RTSP MVP
+
+The implemented MVP uses MediaMTX path `camera` as the single fan-out point.
+MediaMTX pulls one external RTSP source (or accepts the local test publisher),
+while the RTSP analysis worker and Hiperwall read that same path independently.
+The worker samples frames, runs CPU YOLO, and persists metadata without storing
+the RTSP URL.
+
+Path `analyzed` is reserved but has no publisher yet. Overlay, encode, and
+publication of boxed video remain a later pipeline stage; the current Hiperwall
+URL therefore carries the original stream.
+
 ## Module ownership
 
 `backend/src/cctv/media/ingest.py`
@@ -72,4 +84,3 @@ This makes process separation a deployment change rather than a rewrite.
 HiperInterface controls content and layout. It is not a per-frame drawing API.
 If boxes and track IDs are required on the video wall, this pipeline must create
 and publish a separate analyzed RTSP stream.
-

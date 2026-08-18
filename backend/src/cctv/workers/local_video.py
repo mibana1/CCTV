@@ -13,6 +13,7 @@ from time import perf_counter
 
 from cctv.core.logging import configure_logging, shutdown_logging
 from cctv.core.settings import AiDevice, get_settings
+from cctv.db import AnalysisRunRecord, AnalysisRunStatus, DetectionRepository, initialize_database
 from cctv.inference import CpuYoloDetector, load_class_names
 from cctv.media import (
     DecodedFrame,
@@ -316,6 +317,9 @@ def run(argv: Sequence[str] | None = None) -> None:
         parser.error("YOLO tuning options require --analyze-yolo or CCTV_YOLO_ENABLED=true")
     if analyze_yolo and settings.ai_device is not AiDevice.CPU:
         parser.error("CPU YOLO analysis requires CCTV_AI_DEVICE=cpu")
+    effective_sample_fps = (
+        arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
+    )
 
     configure_logging(
         level=settings.log_level,
@@ -326,6 +330,9 @@ def run(argv: Sequence[str] | None = None) -> None:
     try:
         frame_consumers: list[FrameConsumer] = []
         yolo_detector: CpuYoloDetector | None = None
+        detection_repository: DetectionRepository | None = None
+        analysis_run: AnalysisRunRecord | None = None
+        analysis_run_finished = False
         if analyze_yolo:
             yolo_detector = CpuYoloDetector(
                 arguments.model_path or settings.model_path,
@@ -344,7 +351,27 @@ def run(argv: Sequence[str] | None = None) -> None:
                     else settings.yolo_nms_threshold
                 ),
             )
-            frame_consumers.append(yolo_detector)
+            if settings.persist_detections:
+                initialize_database(settings.database_path)
+                detection_repository = DetectionRepository(settings.database_path)
+                analysis_run = detection_repository.create_analysis_run(
+                    source_type="local_video",
+                    source_name=Path(video_path).name,
+                    model_name=yolo_detector.model_path.name,
+                    model_sha256=yolo_detector.model_sha256,
+                    device="cpu",
+                    input_size=yolo_detector.input_size,
+                    confidence_threshold=yolo_detector.confidence_threshold,
+                    nms_threshold=yolo_detector.nms_threshold,
+                    sample_fps=effective_sample_fps,
+                )
+
+            def analyze_frame(frame: DecodedFrame) -> None:
+                result = yolo_detector.analyze(frame)
+                if detection_repository is not None and analysis_run is not None:
+                    detection_repository.save_frame(analysis_run.id, result)
+
+            frame_consumers.append(analyze_frame)
 
         snapshot_writer: SnapshotWriter | None = None
         if save_snapshots:
@@ -365,14 +392,40 @@ def run(argv: Sequence[str] | None = None) -> None:
         elif frame_consumers:
             frame_consumer = SequentialFrameConsumer(*frame_consumers)
 
-        result = LocalVideoWorker(
-            video_path,
-            sample_fps=(
-                arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
-            ),
-            frame_consumer=frame_consumer,
-            max_samples=arguments.max_samples,
-        ).execute()
+        try:
+            result = LocalVideoWorker(
+                video_path,
+                sample_fps=effective_sample_fps,
+                frame_consumer=frame_consumer,
+                max_samples=arguments.max_samples,
+            ).execute()
+            if detection_repository is not None and analysis_run is not None:
+                analysis_run = detection_repository.finish_analysis_run(
+                    analysis_run.id,
+                    status=AnalysisRunStatus(result.status.value),
+                )
+                analysis_run_finished = True
+        except Exception as error:
+            if (
+                detection_repository is not None
+                and analysis_run is not None
+                and not analysis_run_finished
+            ):
+                try:
+                    detection_repository.finish_analysis_run(
+                        analysis_run.id,
+                        status=AnalysisRunStatus.FAILED,
+                        error_type=type(error).__name__,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Analysis run failure state could not be persisted",
+                        extra={
+                            "event": "analysis_run_failure_persistence_failed",
+                            "analysis_run_id": analysis_run.id,
+                        },
+                    )
+            raise
         output = asdict(result)
         if snapshot_writer is not None:
             output["snapshots"] = {
@@ -395,10 +448,16 @@ def run(argv: Sequence[str] | None = None) -> None:
             )
         if yolo_detector is not None:
             output["analysis"] = asdict(yolo_detector.summary)
+            output["analysis"]["persistence_enabled"] = settings.persist_detections
+            output["analysis"]["analysis_run_id"] = (
+                analysis_run.id if analysis_run is not None else None
+            )
             logger.info(
                 "CPU YOLO analysis run complete",
                 extra={
                     "event": "yolo_run_completed",
+                    "analysis_run_id": analysis_run.id if analysis_run is not None else None,
+                    "persistence_enabled": settings.persist_detections,
                     **asdict(yolo_detector.summary),
                 },
             )

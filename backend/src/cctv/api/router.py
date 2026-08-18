@@ -9,11 +9,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from cctv import __version__
+from cctv.api.analysis import router as analysis_router
 from cctv.db import check_database_health
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.include_router(analysis_router)
 
 
 class DatabaseHealthResponse(BaseModel):

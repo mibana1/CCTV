@@ -1,6 +1,16 @@
 name: cctv-test
 
 services:
+  mediamtx:
+    image: bluenviron/mediamtx:1.19.3
+    environment:
+      MTX_PATHS_CAMERA_SOURCE: ${CCTV_RTSP_INPUT_URL:-publisher}
+    ports:
+      - "8554:8554"
+    volumes:
+      - ./infra/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
+
   backend:
     build:
       context: ./backend
@@ -13,6 +23,7 @@ services:
       CCTV_YOLO_INPUT_SIZE: ${CCTV_YOLO_INPUT_SIZE:-640}
       CCTV_YOLO_CONFIDENCE_THRESHOLD: ${CCTV_YOLO_CONFIDENCE_THRESHOLD:-0.25}
       CCTV_YOLO_NMS_THRESHOLD: ${CCTV_YOLO_NMS_THRESHOLD:-0.45}
+      CCTV_PERSIST_DETECTIONS: ${CCTV_PERSIST_DETECTIONS:-true}
       CCTV_LOG_LEVEL: ${CCTV_LOG_LEVEL:-INFO}
       CCTV_LOG_PATH: /runtime/logs/cctv.jsonl
       CCTV_LOG_MAX_BYTES: ${CCTV_LOG_MAX_BYTES:-10485760}
@@ -70,9 +81,11 @@ services:
       CCTV_YOLO_INPUT_SIZE: ${CCTV_YOLO_INPUT_SIZE:-640}
       CCTV_YOLO_CONFIDENCE_THRESHOLD: ${CCTV_YOLO_CONFIDENCE_THRESHOLD:-0.25}
       CCTV_YOLO_NMS_THRESHOLD: ${CCTV_YOLO_NMS_THRESHOLD:-0.45}
+      CCTV_PERSIST_DETECTIONS: ${CCTV_PERSIST_DETECTIONS:-true}
       CCTV_MODEL_PATH: /models/${YOLO_MODEL_FILE:-model.onnx}
       CCTV_MODEL_CLASSES_PATH: ${CCTV_MODEL_CLASSES_PATH:-}
       CCTV_LOCAL_VIDEO_PATH: /samples/${LOCAL_VIDEO_FILE:-testvideo1.mp4}
+      CCTV_DATABASE_PATH: /runtime/cctv.db
       CCTV_SNAPSHOT_DIR: /runtime/snapshots
       CCTV_SNAPSHOT_JPEG_QUALITY: ${CCTV_SNAPSHOT_JPEG_QUALITY:-90}
       CCTV_LOG_LEVEL: ${CCTV_LOG_LEVEL:-INFO}
@@ -83,3 +96,92 @@ services:
       - ${LOCAL_VIDEO_DIR:-../video}:/samples:ro
       - ./artifacts/models:/models:ro
       - ./runtime:/runtime
+
+  rtsp-worker:
+    profiles:
+      - rtsp
+    build:
+      context: ./backend
+    entrypoint:
+      - uv
+      - run
+      - --no-sync
+      - cctv-rtsp-worker
+    command: []
+    depends_on:
+      mediamtx:
+        condition: service_started
+    environment:
+      CCTV_APP_ENV: development
+      CCTV_AI_DEVICE: cpu
+      CCTV_ANALYSIS_FPS: ${CCTV_ANALYSIS_FPS:-2}
+      CCTV_YOLO_ENABLED: ${CCTV_YOLO_ENABLED:-true}
+      CCTV_YOLO_INPUT_SIZE: ${CCTV_YOLO_INPUT_SIZE:-640}
+      CCTV_YOLO_CONFIDENCE_THRESHOLD: ${CCTV_YOLO_CONFIDENCE_THRESHOLD:-0.25}
+      CCTV_YOLO_NMS_THRESHOLD: ${CCTV_YOLO_NMS_THRESHOLD:-0.45}
+      CCTV_PERSIST_DETECTIONS: ${CCTV_PERSIST_DETECTIONS:-true}
+      CCTV_MODEL_PATH: /models/${YOLO_MODEL_FILE:-model.onnx}
+      CCTV_MODEL_CLASSES_PATH: ${CCTV_MODEL_CLASSES_PATH:-}
+      CCTV_DATABASE_PATH: /runtime/cctv.db
+      CCTV_SNAPSHOT_DIR: /runtime/snapshots
+      CCTV_SNAPSHOT_JPEG_QUALITY: ${CCTV_SNAPSHOT_JPEG_QUALITY:-90}
+      CCTV_RTSP_WORKER_URL: rtsp://mediamtx:8554/camera
+      CCTV_RTSP_SOURCE_NAME: ${CCTV_RTSP_SOURCE_NAME:-camera}
+      CCTV_RTSP_OPEN_TIMEOUT_SECONDS: ${CCTV_RTSP_OPEN_TIMEOUT_SECONDS:-10}
+      CCTV_RTSP_READ_TIMEOUT_SECONDS: ${CCTV_RTSP_READ_TIMEOUT_SECONDS:-10}
+      CCTV_RTSP_RECONNECT_INITIAL_SECONDS: ${CCTV_RTSP_RECONNECT_INITIAL_SECONDS:-1}
+      CCTV_RTSP_RECONNECT_MAX_SECONDS: ${CCTV_RTSP_RECONNECT_MAX_SECONDS:-30}
+      CCTV_RTSP_RECONNECT_JITTER_RATIO: ${CCTV_RTSP_RECONNECT_JITTER_RATIO:-0.2}
+      CCTV_RTSP_MAX_RETRIES: ${CCTV_RTSP_MAX_RETRIES:-20}
+      CCTV_LOG_LEVEL: ${CCTV_LOG_LEVEL:-INFO}
+      CCTV_LOG_PATH: /runtime/logs/cctv.jsonl
+      CCTV_LOG_MAX_BYTES: ${CCTV_LOG_MAX_BYTES:-10485760}
+      CCTV_LOG_BACKUP_COUNT: ${CCTV_LOG_BACKUP_COUNT:-5}
+      OPENCV_FFMPEG_CAPTURE_OPTIONS: rtsp_transport;tcp
+    volumes:
+      - ./artifacts/models:/models:ro
+      - ./runtime:/runtime
+    restart: unless-stopped
+
+  rtsp-test-publisher:
+    profiles:
+      - rtsp-test
+    image: bluenviron/mediamtx:1.19.3-ffmpeg
+    entrypoint:
+      - ffmpeg
+    command:
+      - -hide_banner
+      - -loglevel
+      - warning
+      - -nostdin
+      - -re
+      - -stream_loop
+      - "-1"
+      - -i
+      - /samples/${RTSP_TEST_VIDEO_FILE:-testvideo1.mp4}
+      - -an
+      - -c:v
+      - libx264
+      - -preset
+      - veryfast
+      - -tune
+      - zerolatency
+      - -g
+      - "30"
+      - -keyint_min
+      - "30"
+      - -sc_threshold
+      - "0"
+      - -pix_fmt
+      - yuv420p
+      - -rtsp_transport
+      - tcp
+      - -f
+      - rtsp
+      - rtsp://mediamtx:8554/camera
+    depends_on:
+      mediamtx:
+        condition: service_started
+    volumes:
+      - ${RTSP_TEST_VIDEO_DIR:-../video}:/samples:ro
+    restart: on-failure

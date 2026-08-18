@@ -1,0 +1,112 @@
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from cctv.core.settings import Settings
+from cctv.db import AnalysisRunStatus, DetectionRepository
+from cctv.inference import BoundingBox, Detection, FrameDetections
+from cctv.main import create_app
+
+
+def create_result(sample_index: int, class_name: str, confidence: float) -> FrameDetections:
+    return FrameDetections(
+        source_index=sample_index * 2,
+        sample_index=sample_index,
+        timestamp_seconds=sample_index * 0.5,
+        frame_width=1920,
+        frame_height=1080,
+        inference_seconds=0.04,
+        detections=(
+            Detection(
+                class_id=0 if class_name == "person" else 2,
+                label=class_name,
+                confidence=confidence,
+                box=BoundingBox(x1=100, y1=200, x2=300, y2=500),
+            ),
+        ),
+    )
+
+
+def create_run(repository: DetectionRepository, run_id: str, source_name: str) -> str:
+    run = repository.create_analysis_run(
+        source_type="local_video",
+        source_name=source_name,
+        model_name="model.onnx",
+        model_sha256="b" * 64,
+        device="cpu",
+        input_size=640,
+        confidence_threshold=0.25,
+        nms_threshold=0.45,
+        sample_fps=2,
+        run_id=run_id,
+    )
+    return run.id
+
+
+def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) -> None:
+    database_path = tmp_path / "runtime" / "cctv.db"
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_path=database_path,
+        model_path=tmp_path / "model.onnx",
+        log_path=tmp_path / "runtime" / "cctv.jsonl",
+    )
+
+    with TestClient(create_app(settings)) as client:
+        repository = DetectionRepository(database_path)
+        first_run_id = create_run(repository, "run-1", "first.mp4")
+        repository.save_frame(first_run_id, create_result(0, "person", 0.9))
+        repository.save_frame(first_run_id, create_result(1, "person", 0.4))
+        repository.save_frame(first_run_id, create_result(2, "car", 0.8))
+        repository.finish_analysis_run(first_run_id, status=AnalysisRunStatus.COMPLETED)
+
+        second_run_id = create_run(repository, "run-2", "second.mp4")
+        repository.save_frame(second_run_id, create_result(0, "person", 0.95))
+        repository.finish_analysis_run(second_run_id, status=AnalysisRunStatus.FAILED)
+
+        run_page = client.get("/analysis-runs", params={"page": 1, "limit": 1})
+        completed_runs = client.get("/analysis-runs", params={"status": "completed"})
+        run_detail = client.get(f"/analysis-runs/{first_run_id}")
+        detections = client.get(
+            "/detections",
+            params={
+                "analysis_run_id": first_run_id,
+                "class_name": "PERSON",
+                "min_confidence": 0.5,
+                "limit": 10,
+            },
+        )
+        second_detection_page = client.get("/detections", params={"page": 2, "limit": 2})
+
+        assert run_page.status_code == 200
+        assert run_page.json()["total"] == 2
+        assert run_page.json()["has_next"] is True
+        assert len(run_page.json()["items"]) == 1
+        assert completed_runs.json()["total"] == 1
+        assert completed_runs.json()["items"][0]["id"] == first_run_id
+
+        assert run_detail.status_code == 200
+        assert run_detail.json()["processed_frames"] == 3
+        assert run_detail.json()["total_detections"] == 3
+        assert run_detail.json()["source_name"] == "first.mp4"
+        assert "model_path" not in run_detail.json()
+
+        assert detections.status_code == 200
+        assert detections.json()["total"] == 1
+        assert detections.json()["items"][0]["class_name"] == "person"
+        assert detections.json()["items"][0]["confidence"] == 0.9
+        assert detections.json()["items"][0]["box"] == {
+            "x1": 100,
+            "y1": 200,
+            "x2": 300,
+            "y2": 500,
+        }
+        assert second_detection_page.status_code == 200
+        assert second_detection_page.json()["total"] == 4
+        assert len(second_detection_page.json()["items"]) == 2
+
+        assert client.get("/analysis-runs/missing").status_code == 404
+        assert client.get("/analysis-runs", params={"limit": 101}).status_code == 422
+        assert client.get("/detections", params={"page": 0}).status_code == 422
+        assert client.get("/detections", params={"min_confidence": 1.1}).status_code == 422

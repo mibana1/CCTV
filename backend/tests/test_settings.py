@@ -22,6 +22,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_YOLO_INPUT_SIZE", "320")
     monkeypatch.setenv("CCTV_YOLO_CONFIDENCE_THRESHOLD", "0.4")
     monkeypatch.setenv("CCTV_YOLO_NMS_THRESHOLD", "0.5")
+    monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
     monkeypatch.setenv("CCTV_LOG_LEVEL", "debug")
@@ -34,6 +35,16 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_LOCAL_VIDEO_PATH", str(local_video_path))
     monkeypatch.setenv("CCTV_SNAPSHOT_DIR", str(snapshot_dir))
     monkeypatch.setenv("CCTV_SNAPSHOT_JPEG_QUALITY", "95")
+    monkeypatch.setenv("CCTV_RTSP_INPUT_URL", "rtsp://user:password@camera:554/stream")
+    monkeypatch.setenv("CCTV_RTSP_WORKER_URL", "rtsp://mediamtx:8554/camera")
+    monkeypatch.setenv("CCTV_RTSP_SOURCE_NAME", "camera-1")
+    monkeypatch.setenv("CCTV_RTSP_OPEN_TIMEOUT_SECONDS", "4")
+    monkeypatch.setenv("CCTV_RTSP_READ_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("CCTV_RTSP_RECONNECT_INITIAL_SECONDS", "2")
+    monkeypatch.setenv("CCTV_RTSP_RECONNECT_MAX_SECONDS", "8")
+    monkeypatch.setenv("CCTV_RTSP_RECONNECT_JITTER_RATIO", "0.1")
+    monkeypatch.setenv("CCTV_RTSP_MAX_RETRIES", "7")
+    monkeypatch.setenv("CCTV_RTSP_MAX_SAMPLES", "9")
     monkeypatch.setenv("HIPERWALL_AUTH_MODE", "TOKEN")
     monkeypatch.setenv("HIPERWALL_TOKEN", "test-token")
     monkeypatch.setenv("HIPERWALL_BASE_URL", "http://hiperwall-host:8000")
@@ -48,6 +59,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.yolo_input_size == 320
     assert settings.yolo_confidence_threshold == 0.4
     assert settings.yolo_nms_threshold == 0.5
+    assert settings.persist_detections is False
     assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
@@ -61,6 +73,16 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.local_video_path == local_video_path
     assert settings.snapshot_dir == snapshot_dir
     assert settings.snapshot_jpeg_quality == 95
+    assert settings.rtsp_input_url == "rtsp://user:password@camera:554/stream"
+    assert settings.rtsp_worker_url == "rtsp://mediamtx:8554/camera"
+    assert settings.rtsp_source_name == "camera-1"
+    assert settings.rtsp_open_timeout_seconds == 4
+    assert settings.rtsp_read_timeout_seconds == 5
+    assert settings.rtsp_reconnect_initial_seconds == 2
+    assert settings.rtsp_reconnect_max_seconds == 8
+    assert settings.rtsp_reconnect_jitter_ratio == 0.1
+    assert settings.rtsp_max_retries == 7
+    assert settings.rtsp_max_samples == 9
     assert settings.hiperwall_auth_mode == "token"
     assert settings.hiperwall_token is not None
     assert settings.hiperwall_token.get_secret_value() == "test-token"
@@ -91,6 +113,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_AI_DEVICE",
         "CCTV_ANALYSIS_FPS",
         "CCTV_YOLO_ENABLED",
+        "CCTV_PERSIST_DETECTIONS",
         "CCTV_LOCAL_VIDEO_PATH",
     ):
         monkeypatch.delenv(variable, raising=False)
@@ -104,6 +127,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.yolo_input_size == 640
     assert settings.yolo_confidence_threshold == 0.25
     assert settings.yolo_nms_threshold == 0.45
+    assert settings.persist_detections is True
     assert settings.local_video_path is None
     assert settings.external_actions_enabled is False
 
@@ -147,4 +171,18 @@ def test_settings_live_token_mode_requires_token() -> None:
             hiperwall_base_url="http://hiperwall-host:8000",
             hiperwall_auth_mode="token",
             hiperwall_token=None,
+        )
+
+
+def test_settings_reject_invalid_rtsp_url() -> None:
+    with pytest.raises(ValidationError, match="RTSP URL"):
+        Settings(_env_file=None, rtsp_worker_url="http://camera/stream")
+
+
+def test_settings_reject_reconnect_max_below_initial() -> None:
+    with pytest.raises(ValidationError, match="RECONNECT_MAX_SECONDS"):
+        Settings(
+            _env_file=None,
+            rtsp_reconnect_initial_seconds=10,
+            rtsp_reconnect_max_seconds=5,
         )

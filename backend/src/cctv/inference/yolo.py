@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
+from hashlib import file_digest
 from math import isfinite
 from pathlib import Path
 from time import perf_counter
@@ -115,8 +116,6 @@ class YoloInferenceError(YoloError):
 class _DnnNetwork(Protocol):
     def setPreferableBackend(self, backend_id: int) -> None: ...
 
-    def setPreferableTarget(self, target_id: int) -> None: ...
-
     def setInput(self, blob: NDArray[np.float32]) -> None: ...
 
     def forward(self) -> NDArray[np.float32] | Sequence[NDArray[np.float32]]: ...
@@ -149,6 +148,8 @@ class FrameDetections:
     source_index: int
     sample_index: int
     timestamp_seconds: float
+    frame_width: int
+    frame_height: int
     inference_seconds: float
     detections: tuple[Detection, ...]
 
@@ -158,6 +159,8 @@ class YoloRunSummary:
     """Bounded aggregate statistics for a detector instance."""
 
     model_path: Path
+    model_name: str
+    model_sha256: str
     device: str
     input_size: int
     confidence_threshold: float
@@ -194,7 +197,7 @@ def load_class_names(path: str | Path | None) -> tuple[str, ...]:
 
 
 class CpuYoloDetector:
-    """Run a YOLO ONNX model on sampled frames with an explicit CPU target.
+    """Run a YOLO ONNX model on sampled frames with OpenCV's CPU graph engine.
 
     Standard Ultralytics YOLOv8/YOLO11 outputs (``4 + classes``) and YOLOv5
     outputs (``5 + classes``) are accepted. Model acquisition is intentionally
@@ -228,15 +231,17 @@ class CpuYoloDetector:
             raise YoloModelLoadError("CPU YOLO currently requires an ONNX model")
 
         try:
+            with self.model_path.open("rb") as model_file:
+                model_sha256 = file_digest(model_file, "sha256").hexdigest()
             network: _DnnNetwork = cv2.dnn.readNetFromONNX(str(self.model_path))
             network.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-            network.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
         except (cv2.error, OSError) as error:
             raise YoloModelLoadError(
                 f"YOLO ONNX model could not be loaded: {self.model_path}"
             ) from error
 
         self.class_names = names
+        self.model_sha256 = model_sha256
         self.input_size = input_size
         self.confidence_threshold = float(confidence_threshold)
         self.nms_threshold = float(nms_threshold)
@@ -250,6 +255,7 @@ class CpuYoloDetector:
             extra={
                 "event": "yolo_detector_initialized",
                 "model_path": self.model_path,
+                "model_sha256": self.model_sha256,
                 "device": "cpu",
                 "input_size": self.input_size,
                 "class_count": len(self.class_names),
@@ -268,6 +274,8 @@ class CpuYoloDetector:
         )
         return YoloRunSummary(
             model_path=self.model_path,
+            model_name=self.model_path.name,
+            model_sha256=self.model_sha256,
             device="cpu",
             input_size=self.input_size,
             confidence_threshold=self.confidence_threshold,
@@ -328,6 +336,8 @@ class CpuYoloDetector:
             source_index=frame.source_index,
             sample_index=frame.sample_index,
             timestamp_seconds=frame.timestamp_seconds,
+            frame_width=frame.image.shape[1],
+            frame_height=frame.image.shape[0],
             inference_seconds=round(inference_seconds, 6),
             detections=detections,
         )

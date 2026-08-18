@@ -72,7 +72,7 @@ def test_cpu_yolo_decodes_v8_output_with_class_aware_nms(
     result = detector.analyze(create_frame())
 
     assert network.backend_id == cv2.dnn.DNN_BACKEND_OPENCV
-    assert network.target_id == cv2.dnn.DNN_TARGET_CPU
+    assert network.target_id is None
     assert network.input_blob is not None
     assert network.input_blob.shape == (1, 3, 640, 640)
     assert [detection.label for detection in result.detections] == ["person", "car"]
@@ -80,9 +80,13 @@ def test_cpu_yolo_decodes_v8_output_with_class_aware_nms(
     assert result.detections[0].box == BoundingBox(x1=220, y1=110, x2=420, y2=210)
     assert result.source_index == 8
     assert result.sample_index == 2
+    assert result.frame_width == 640
+    assert result.frame_height == 320
     assert detector.summary.processed_frames == 1
     assert detector.summary.total_detections == 2
     assert detector.summary.device == "cpu"
+    assert detector.summary.model_name == "model.onnx"
+    assert len(detector.summary.model_sha256) == 64
 
 
 def test_cpu_yolo_decodes_v5_objectness_output(

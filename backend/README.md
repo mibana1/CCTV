@@ -66,6 +66,13 @@ CPU YOLO 분석은 OpenCV DNN으로 ONNX 모델을 로드하며 모델을 자동
 전체 처리량과 평균 추론 시간은 종료 JSON 및 `yolo_run_completed` 로그에
 기록됩니다.
 
+YOLO가 활성화되면 `CCTV_PERSIST_DETECTIONS=true` 기본값에 따라 실행 정보,
+분석한 프레임과 검출 객체를 `CCTV_DATABASE_PATH`의 SQLite에 저장합니다. 각
+실행은 UUID로 구분되며 모델 파일명과 SHA-256, 임계값, FPS, 완료 상태를 함께
+기록합니다. 검출 객체가 없는 프레임도 저장하므로 처리 프레임 수와 검출 수를
+독립적으로 확인할 수 있습니다. 프레임과 그 검출 결과는 하나의 트랜잭션으로
+저장되며 실행 중 오류가 발생하면 실행 상태를 `failed`로 종료합니다.
+
 ```bash
 uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10 --save-snapshots
 uv run cctv-local-worker ../video/testvideo1.mp4 --max-samples 10 --analyze-yolo --model-path ../artifacts/models/model.onnx
@@ -76,3 +83,53 @@ Compose에서 CPU 분석을 켜려면 모델 파일을 `artifacts/models/model.o
 `CCTV_YOLO_ENABLED=true`를 설정합니다. 파일명이 다르면 `YOLO_MODEL_FILE`로
 마운트 디렉터리 안의 파일명만 변경할 수 있습니다. 커스텀 클래스 파일은 컨테이너
 경로(예: `/models/classes.txt`)를 `CCTV_MODEL_CLASSES_PATH`로 지정합니다.
+
+검출 조회 API는 내부 영상·모델 파일 경로를 반환하지 않습니다. 모든 목록은
+`page`와 `limit`을 사용하며 `limit`은 최대 100입니다.
+
+```text
+GET /analysis-runs?page=1&limit=50
+GET /analysis-runs/{analysis_run_id}
+GET /detections?analysis_run_id={id}&class_name=person&min_confidence=0.5&page=1&limit=50
+```
+
+`/analysis-runs`는 `status=completed|stopped|failed|running` 필터를 지원하고,
+`/detections`의 클래스 이름은 대소문자를 구분하지 않는 완전 일치 방식입니다.
+현재 API에는 사용자 인증이 없으므로 로컬 검증 네트워크 밖에 공개하지 마십시오.
+
+## RTSP 및 MediaMTX
+
+MediaMTX는 외부 카메라 RTSP를 `camera` 경로로 중계합니다. RTSP 워커는
+API와 별도 프로세스로 이 내부 경로를 읽고, 경과 시간 기준 `CCTV_ANALYSIS_FPS`만
+YOLO와 저장 계층에 전달합니다. OpenCV 열기·읽기 타임아웃을 적용하고 연결이
+끊어지면 jitter가 포함된 제한적 지수 백오프로 재연결합니다. Python 측 프레임
+프리페치 큐는 만들지 않습니다.
+
+```bash
+# 로컬 테스트 영상 -> MediaMTX camera 경로
+CCTV_RTSP_INPUT_URL=publisher \
+docker compose --profile rtsp-test up -d mediamtx rtsp-test-publisher
+
+# MediaMTX camera 경로 -> YOLO -> SQLite (10개 샘플 후 종료)
+CCTV_YOLO_ENABLED=true \
+docker compose --profile rtsp run --rm --build rtsp-worker \
+  --max-samples 10 --save-snapshots
+```
+
+실제 카메라에서는 Git에서 제외된 `.env`에 다음처럼 입력한 뒤 서비스를
+시작합니다. 사용자명이나 비밀번호에 `@`, `:`, `/`, `#` 같은 문자가 있으면
+URL percent-encoding을 적용해야 합니다.
+
+```dotenv
+CCTV_RTSP_INPUT_URL=rtsp://username:password@camera-host:554/stream
+CCTV_RTSP_SOURCE_NAME=camera-1
+CCTV_YOLO_ENABLED=true
+```
+
+```bash
+docker compose --profile rtsp up -d --build mediamtx rtsp-worker
+```
+
+워커와 DB에는 RTSP URL 대신 `CCTV_RTSP_SOURCE_NAME`만 기록합니다. Hiperwall의
+IP Stream 주소는 `rtsp://<Docker 호스트 IP>:8554/camera`입니다. 이 경로는
+현재 원본 영상이며 `analyzed` 경로는 박스 오버레이·인코딩 구현 후 사용합니다.

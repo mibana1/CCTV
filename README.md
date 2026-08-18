@@ -68,5 +68,26 @@ cp .env.example .env
 docker compose up --build
 ```
 
+## RTSP 소규모 실행
+
+MediaMTX가 외부 RTSP를 `camera` 경로로 한 번만 수신하고, CPU 분석 워커와
+Hiperwall이 이 중계 경로를 각각 읽습니다. 실제 카메라가 없어도 로컬 영상을
+반복 발행하는 `rtsp-test` 프로파일로 전체 수신·분석·DB 저장 흐름을 확인할 수
+있습니다.
+
+```bash
+CCTV_RTSP_INPUT_URL=publisher \
+docker compose --profile rtsp-test up -d mediamtx rtsp-test-publisher
+
+CCTV_YOLO_ENABLED=true \
+docker compose --profile rtsp run --rm --build rtsp-worker \
+  --max-samples 10 --save-snapshots
+```
+
+실제 카메라를 사용할 때만 Git에서 제외된 `.env`에
+`CCTV_RTSP_INPUT_URL=rtsp://username:password@camera-host:554/stream`을 설정합니다.
+Hiperwall에서 원본 영상을 읽을 주소는
+`rtsp://<Docker 호스트 IP>:8554/camera`입니다.
+
 실제 RTSP 또는 Hiperwall 연동 전에
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)의 차단 항목을 먼저 확인합니다.

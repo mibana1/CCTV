@@ -1,8 +1,12 @@
+import json
 from pathlib import Path
 
 import cv2
+import numpy as np
 import pytest
 
+from cctv.core.settings import get_settings
+from cctv.db import AnalysisRunStatus, DetectionRepository
 from cctv.media import DecodedFrame, SnapshotWriter
 from cctv.workers import (
     LocalVideoWorker,
@@ -10,6 +14,7 @@ from cctv.workers import (
     WorkerStatus,
     WorkerStopReason,
 )
+from cctv.workers.local_video import run as run_local_video_worker
 from tests.video_factory import create_test_video
 
 
@@ -127,6 +132,68 @@ def test_local_video_worker_is_single_use(tmp_path: Path) -> None:
 
     with pytest.raises(RuntimeError, match="only be executed once"):
         worker.execute()
+
+
+def test_local_video_cli_persists_yolo_results(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeNetwork:
+        def __init__(self) -> None:
+            self.output = np.zeros((1, 84, 1), dtype=np.float32)
+            self.output[0, :4, 0] = [320, 320, 100, 100]
+            self.output[0, 4, 0] = 0.9
+
+        def setPreferableBackend(self, backend_id: int) -> None:
+            del backend_id
+
+        def setInput(self, blob: np.ndarray) -> None:
+            del blob
+
+        def forward(self) -> np.ndarray:
+            return self.output
+
+    video_path = create_test_video(tmp_path / "sample.avi")
+    model_path = tmp_path / "model.onnx"
+    model_path.write_bytes(b"test model placeholder")
+    database_path = tmp_path / "runtime" / "cctv.db"
+    monkeypatch.setattr(cv2.dnn, "readNetFromONNX", lambda path: FakeNetwork())
+    monkeypatch.setenv("CCTV_APP_MODE", "dry_run")
+    monkeypatch.setenv("CCTV_AI_DEVICE", "cpu")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "true")
+    monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "runtime" / "cctv.jsonl"))
+    get_settings.cache_clear()
+
+    try:
+        run_local_video_worker(
+            [
+                str(video_path),
+                "--analyze-yolo",
+                "--model-path",
+                str(model_path),
+                "--sample-fps",
+                "2",
+                "--max-samples",
+                "2",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    output = json.loads(capsys.readouterr().out.splitlines()[-1])
+    repository = DetectionRepository(database_path)
+    runs = repository.list_analysis_runs()
+
+    assert output["analysis"]["persistence_enabled"] is True
+    assert output["analysis"]["analysis_run_id"] == runs.items[0].id
+    assert runs.total == 1
+    assert runs.items[0].status is AnalysisRunStatus.COMPLETED
+    assert runs.items[0].processed_frames == 2
+    assert runs.items[0].total_detections == 2
+    assert repository.list_detections(analysis_run_id=runs.items[0].id).total == 2
 
 
 @pytest.mark.parametrize("max_samples", [0, -1])
