@@ -331,7 +331,13 @@ def run(argv: Sequence[str] | None = None) -> None:
                 if tracker is not None:
                     result = tracker.update(result)
                 if repository is not None and analysis_run is not None:
-                    repository.save_frame(analysis_run.id, result)
+                    repository.save_frame(
+                        analysis_run.id,
+                        result,
+                        active_track_ids=(
+                            tracker.active_track_ids if tracker is not None else None
+                        ),
+                    )
 
             consumers.append(analyze_frame)
 

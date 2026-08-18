@@ -123,6 +123,7 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
     assert track.last_sample_index == 1
     assert track.observation_count == 2
     assert track.max_confidence == pytest.approx(0.95)
+    assert track.is_active is False
     assert tracks.total == 1
     assert observations.total == 2
     assert [item.sample_index for item in observations.items] == [0, 1]
@@ -245,3 +246,58 @@ def test_repository_rolls_back_track_class_mismatch(tmp_path: Path) -> None:
         "tracks": 1,
         "track_observations": 1,
     }
+
+
+def test_repository_filters_tracks_by_class_time_and_active_state(tmp_path: Path) -> None:
+    database_path = tmp_path / "cctv.db"
+    initialize_database(database_path)
+    repository = DetectionRepository(database_path)
+    run = create_run(repository)
+    repository.save_frame(
+        run.id,
+        make_result(0, make_detection(0, "person", 0.9, track_id=1)),
+        active_track_ids=(1,),
+    )
+    repository.save_frame(
+        run.id,
+        make_result(
+            1,
+            make_detection(0, "person", 0.8, track_id=1),
+            make_detection(2, "car", 0.7, track_id=2),
+        ),
+        active_track_ids=(1, 2),
+    )
+    repository.save_frame(run.id, make_result(2), active_track_ids=(2,))
+
+    active = repository.list_tracks(analysis_run_id=run.id, is_active=True)
+    inactive_people = repository.list_tracks(
+        analysis_run_id=run.id,
+        class_name="PERSON",
+        is_active=False,
+    )
+    overlapping = repository.list_tracks(
+        analysis_run_id=run.id,
+        observed_from_seconds=0.4,
+        observed_to_seconds=0.6,
+    )
+    after_last_observation = repository.list_tracks(
+        analysis_run_id=run.id,
+        observed_from_seconds=0.6,
+    )
+
+    assert [item.track_id for item in active.items] == [2]
+    assert active.items[0].is_active is True
+    assert [item.track_id for item in inactive_people.items] == [1]
+    assert {item.track_id for item in overlapping.items} == {1, 2}
+    assert after_last_observation.total == 0
+
+    with pytest.raises(ValueError, match="less than or equal"):
+        repository.list_tracks(observed_from_seconds=2, observed_to_seconds=1)
+    with pytest.raises(ValueError, match="positive integers"):
+        repository.save_frame(run.id, make_result(3), active_track_ids=(-1,))
+    with pytest.raises(RuntimeError, match="unknown track_id"):
+        repository.save_frame(run.id, make_result(3), active_track_ids=(999,))
+
+    repository.finish_analysis_run(run.id, status=AnalysisRunStatus.COMPLETED)
+    assert repository.list_tracks(analysis_run_id=run.id, is_active=True).total == 0
+    assert repository.list_tracks(analysis_run_id=run.id, is_active=False).total == 2

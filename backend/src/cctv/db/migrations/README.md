@@ -12,5 +12,6 @@ analysis-run, analyzed-frame, and detection tables with query indexes. Version
 3 adds the nullable per-run `track_id` used by object tracking while preserving
 historical detection rows. Version 4 adds aggregate `tracks` and normalized
 `track_observations`, including a backfill from existing tracked detections. Add
-later domain tables as new versioned migration modules; never edit a migration
-that has been deployed.
+Version 5 adds the tracker-owned active state and a class/time/state query index.
+Add later domain tables as new versioned migration modules; never edit a
+migration that has been deployed.

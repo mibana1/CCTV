@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Collection
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
+from math import isfinite
 from pathlib import Path
 from typing import TYPE_CHECKING
 from uuid import uuid4
@@ -92,6 +94,7 @@ class TrackRecord:
     last_seen_timestamp_seconds: float
     observation_count: int
     max_confidence: float
+    is_active: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,8 +231,15 @@ class DetectionRepository:
         )
         return record
 
-    def save_frame(self, analysis_run_id: str, result: FrameDetections) -> int:
+    def save_frame(
+        self,
+        analysis_run_id: str,
+        result: FrameDetections,
+        *,
+        active_track_ids: Collection[int] | None = None,
+    ) -> int:
         """Atomically persist one analyzed frame and every detection it contains."""
+        normalized_active_track_ids = _normalize_active_track_ids(active_track_ids)
         with closing(connect_database(self.database_path)) as connection, connection:
             run = connection.execute(
                 "SELECT status FROM analysis_runs WHERE id = ?",
@@ -294,6 +304,12 @@ class DetectionRepository:
                         result=result,
                         detection=detection,
                     )
+            if normalized_active_track_ids is not None:
+                _sync_active_tracks(
+                    connection,
+                    analysis_run_id=analysis_run_id,
+                    active_track_ids=normalized_active_track_ids,
+                )
         persisted_frame_id = int(frame_id)
         logger.debug(
             "Frame detections persisted",
@@ -350,6 +366,14 @@ class DetectionRepository:
             )
             if cursor.rowcount != 1:
                 raise LookupError(f"running analysis run does not exist: {analysis_run_id}")
+            connection.execute(
+                """
+                UPDATE tracks
+                SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE analysis_run_id = ? AND is_active = 1
+                """,
+                (analysis_run_id,),
+            )
             row = connection.execute(
                 "SELECT * FROM analysis_runs WHERE id = ?",
                 (analysis_run_id,),
@@ -518,11 +542,28 @@ class DetectionRepository:
         analysis_run_id: str | None = None,
         class_name: str | None = None,
         min_observations: int | None = None,
+        observed_from_seconds: float | None = None,
+        observed_to_seconds: float | None = None,
+        is_active: bool | None = None,
     ) -> TrackPage:
-        """Query tracked objects by run, class, and minimum lifetime length."""
+        """Query tracks by run, class, source-time overlap, lifetime, and active state."""
         _validate_pagination(page, limit)
         if min_observations is not None and min_observations < 1:
             raise ValueError("min_observations must be at least 1")
+        for name, value in (
+            ("observed_from_seconds", observed_from_seconds),
+            ("observed_to_seconds", observed_to_seconds),
+        ):
+            if value is not None and (not isfinite(value) or value < 0):
+                raise ValueError(f"{name} must be a finite number that is zero or greater")
+        if (
+            observed_from_seconds is not None
+            and observed_to_seconds is not None
+            and observed_from_seconds > observed_to_seconds
+        ):
+            raise ValueError(
+                "observed_from_seconds must be less than or equal to observed_to_seconds"
+            )
 
         clauses: list[str] = []
         parameters: list[object] = []
@@ -538,6 +579,15 @@ class DetectionRepository:
         if min_observations is not None:
             clauses.append("track.observation_count >= ?")
             parameters.append(min_observations)
+        if observed_from_seconds is not None:
+            clauses.append("track.last_seen_timestamp_seconds >= ?")
+            parameters.append(observed_from_seconds)
+        if observed_to_seconds is not None:
+            clauses.append("track.first_seen_timestamp_seconds <= ?")
+            parameters.append(observed_to_seconds)
+        if is_active is not None:
+            clauses.append("track.is_active = ?")
+            parameters.append(int(is_active))
 
         where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         join_sql = """
@@ -636,8 +686,8 @@ def _save_track_observation(
             analysis_run_id, track_id, class_id, class_name,
             first_sample_index, last_sample_index,
             first_seen_timestamp_seconds, last_seen_timestamp_seconds,
-            observation_count, max_confidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            observation_count, max_confidence, is_active
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 1)
         ON CONFLICT (analysis_run_id, track_id) DO UPDATE SET
             first_sample_index = MIN(first_sample_index, excluded.first_sample_index),
             last_sample_index = MAX(last_sample_index, excluded.last_sample_index),
@@ -651,6 +701,7 @@ def _save_track_observation(
             ),
             observation_count = observation_count + 1,
             max_confidence = MAX(max_confidence, excluded.max_confidence),
+            is_active = 1,
             updated_at = CURRENT_TIMESTAMP
         """,
         (
@@ -684,6 +735,55 @@ def _save_track_observation(
         ) VALUES (?, ?, ?, ?)
         """,
         (analysis_run_id, detection.track_id, analyzed_frame_id, detection_id),
+    )
+
+
+def _normalize_active_track_ids(
+    active_track_ids: Collection[int] | None,
+) -> tuple[int, ...] | None:
+    if active_track_ids is None:
+        return None
+    normalized = tuple(sorted(set(active_track_ids)))
+    if any(track_id < 1 for track_id in normalized):
+        raise ValueError("active_track_ids must contain only positive integers")
+    return normalized
+
+
+def _sync_active_tracks(
+    connection: sqlite3.Connection,
+    *,
+    analysis_run_id: str,
+    active_track_ids: tuple[int, ...],
+) -> None:
+    existing_track_ids = {
+        int(row["track_id"])
+        for row in connection.execute(
+            "SELECT track_id FROM tracks WHERE analysis_run_id = ?",
+            (analysis_run_id,),
+        )
+    }
+    missing_track_ids = set(active_track_ids) - existing_track_ids
+    if missing_track_ids:
+        raise RuntimeError("active tracker state contains an unknown track_id")
+
+    connection.execute(
+        """
+        UPDATE tracks
+        SET is_active = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE analysis_run_id = ? AND is_active = 1
+        """,
+        (analysis_run_id,),
+    )
+    if not active_track_ids:
+        return
+    placeholders = ", ".join("?" for _ in active_track_ids)
+    connection.execute(
+        f"""
+        UPDATE tracks
+        SET is_active = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE analysis_run_id = ? AND track_id IN ({placeholders})
+        """,
+        (analysis_run_id, *active_track_ids),
     )
 
 
@@ -767,6 +867,7 @@ def _track_from_row(row: sqlite3.Row) -> TrackRecord:
         last_seen_timestamp_seconds=float(row["last_seen_timestamp_seconds"]),
         observation_count=int(row["observation_count"]),
         max_confidence=float(row["max_confidence"]),
+        is_active=bool(row["is_active"]),
     )
 
 

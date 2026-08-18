@@ -94,7 +94,14 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
                 "analysis_run_id": first_run_id,
                 "class_name": "PERSON",
                 "min_observations": 2,
+                "observed_from_seconds": 0.4,
+                "observed_to_seconds": 0.6,
+                "active": "false",
             },
+        )
+        active_tracks = client.get(
+            "/tracks",
+            params={"analysis_run_id": first_run_id, "active": "true"},
         )
         track_detail = client.get(f"/analysis-runs/{first_run_id}/tracks/1")
         observations = client.get(
@@ -136,6 +143,9 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
         assert tracks.json()["total"] == 1
         assert tracks.json()["items"][0]["track_id"] == 1
         assert tracks.json()["items"][0]["observation_count"] == 2
+        assert tracks.json()["items"][0]["is_active"] is False
+        assert active_tracks.status_code == 200
+        assert active_tracks.json()["total"] == 0
         assert track_detail.status_code == 200
         assert track_detail.json()["first_sample_index"] == 0
         assert track_detail.json()["last_sample_index"] == 1
@@ -157,6 +167,14 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
         assert client.get("/detections", params={"min_confidence": 1.1}).status_code == 422
         assert client.get("/detections", params={"track_id": 1}).status_code == 422
         assert client.get("/tracks", params={"min_observations": 0}).status_code == 422
+        assert (
+            client.get(
+                "/tracks",
+                params={"observed_from_seconds": 2, "observed_to_seconds": 1},
+            ).status_code
+            == 422
+        )
+        assert client.get("/tracks", params={"observed_from_seconds": -1}).status_code == 422
         assert client.get(f"/analysis-runs/{first_run_id}/tracks/0").status_code == 422
         assert client.get(f"/analysis-runs/{first_run_id}/tracks/999").status_code == 404
         assert (

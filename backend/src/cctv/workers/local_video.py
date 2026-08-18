@@ -378,7 +378,13 @@ def run(argv: Sequence[str] | None = None) -> None:
                 if tracker is not None:
                     result = tracker.update(result)
                 if detection_repository is not None and analysis_run is not None:
-                    detection_repository.save_frame(analysis_run.id, result)
+                    detection_repository.save_frame(
+                        analysis_run.id,
+                        result,
+                        active_track_ids=(
+                            tracker.active_track_ids if tracker is not None else None
+                        ),
+                    )
 
             frame_consumers.append(analyze_frame)
 

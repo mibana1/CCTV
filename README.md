@@ -106,5 +106,15 @@ YOLO 분석 시에는 기본으로 클래스별 IoU 객체 추적이 적용되�
 - 트랙 상세: `GET /analysis-runs/<run-id>/tracks/<track-id>`
 - 관측 이력: `GET /analysis-runs/<run-id>/tracks/<track-id>/observations`
 
+트랙 목록은 클래스, 영상 소스 기준 관측 시간, 현재 활성 상태를 함께 필터링할 수
+있습니다. 시간 범위는 트랙의 최초·최종 관측 구간과 요청 구간이 겹치는 항목을
+반환합니다. `active=true`는 추적기가 누락 허용 범위 안에서 아직 유지 중인 ID를
+의미하며, 분석 실행이 끝나면 해당 실행의 모든 트랙은 비활성화됩니다.
+
+```text
+GET /tracks?analysis_run_id=<run-id>&class_name=person
+    &observed_from_seconds=10&observed_to_seconds=20&active=true
+```
+
 실제 RTSP 또는 Hiperwall 연동 전에
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)의 차단 항목을 먼저 확인합니다.

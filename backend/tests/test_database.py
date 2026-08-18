@@ -9,6 +9,7 @@ from cctv.db.migrations.v0001_initial import apply as apply_v0001
 from cctv.db.migrations.v0002_detection_results import apply as apply_v0002
 from cctv.db.migrations.v0003_detection_tracking import apply as apply_v0003
 from cctv.db.migrations.v0004_track_history import apply as apply_v0004
+from cctv.db.migrations.v0005_track_active_state import apply as apply_v0005
 
 
 def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) -> None:
@@ -18,9 +19,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 4
-    assert first.applied_migrations == (1, 2, 3, 4)
-    assert second.schema_version == 4
+    assert first.schema_version == 5
+    assert first.applied_migrations == (1, 2, 3, 4, 5)
+    assert second.schema_version == 5
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -50,6 +51,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 2, "name": "detection_result_schema"},
             {"version": 3, "name": "detection_tracking_schema"},
             {"version": 4, "name": "track_history_schema"},
+            {"version": 5, "name": "track_active_state_schema"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -83,7 +85,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 4
+    assert health.schema_version == 5
     assert health.journal_mode == "wal"
 
 
@@ -134,6 +136,8 @@ def test_track_history_migration_backfills_existing_tracked_detections(tmp_path:
 
         apply_v0004(connection)
         apply_v0004(connection)
+        apply_v0005(connection)
+        apply_v0005(connection)
 
         track = connection.execute("SELECT * FROM tracks").fetchone()
         observation = connection.execute("SELECT * FROM track_observations").fetchone()
@@ -146,6 +150,7 @@ def test_track_history_migration_backfills_existing_tracked_detections(tmp_path:
     assert track["last_sample_index"] == 5
     assert track["observation_count"] == 1
     assert track["max_confidence"] == pytest.approx(0.91)
+    assert track["is_active"] == 0
     assert observation["analysis_run_id"] == "historical-run"
     assert observation["track_id"] == 7
     assert foreign_key_errors == []

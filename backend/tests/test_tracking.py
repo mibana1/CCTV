@@ -39,6 +39,7 @@ def test_tracker_keeps_id_for_overlapping_detection_of_same_class() -> None:
     assert tracker.summary.created_tracks == 1
     assert tracker.summary.matched_detections == 1
     assert tracker.summary.active_tracks == 1
+    assert tracker.active_track_ids == (1,)
 
 
 def test_tracker_never_matches_different_classes_or_two_detections_to_one_track() -> None:
@@ -73,6 +74,8 @@ def test_tracker_expires_missing_and_idle_tracks() -> None:
 
     assert reacquired.detections[0].track_id == 2
     assert after_gap.detections[0].track_id == 2
+    assert missing_tracker.active_track_ids == (2,)
+    assert idle_tracker.active_track_ids == (2,)
 
 
 def test_tracker_rejects_out_of_order_frames() -> None:

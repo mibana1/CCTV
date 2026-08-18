@@ -72,6 +72,11 @@ class IoUTracker:
             active_tracks=len(self._tracks),
         )
 
+    @property
+    def active_track_ids(self) -> tuple[int, ...]:
+        """Return tracker IDs that remain eligible for a future match."""
+        return tuple(sorted(self._tracks))
+
     def update(self, result: FrameDetections) -> FrameDetections:
         """Match one chronologically ordered frame and return detections with IDs."""
         self._validate_order(result)

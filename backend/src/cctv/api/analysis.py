@@ -104,6 +104,7 @@ class TrackResponse(BaseModel):
     last_seen_timestamp_seconds: float
     observation_count: int
     max_confidence: float
+    is_active: bool
 
 
 class TrackPageResponse(BaseModel):
@@ -221,14 +222,29 @@ def list_tracks(
     analysis_run_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
     class_name: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
     min_observations: Annotated[int | None, Query(ge=1)] = None,
+    observed_from_seconds: Annotated[float | None, Query(ge=0)] = None,
+    observed_to_seconds: Annotated[float | None, Query(ge=0)] = None,
+    active: Annotated[bool | None, Query()] = None,
 ) -> TrackPageResponse:
-    """Query tracked objects by execution, class, and lifetime length."""
+    """Query tracks by class, source-time overlap, lifetime length, and active state."""
+    if (
+        observed_from_seconds is not None
+        and observed_to_seconds is not None
+        and observed_from_seconds > observed_to_seconds
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="observed_from_seconds must be less than or equal to observed_to_seconds",
+        )
     result = _repository(request).list_tracks(
         page=page,
         limit=limit,
         analysis_run_id=analysis_run_id,
         class_name=class_name,
         min_observations=min_observations,
+        observed_from_seconds=observed_from_seconds,
+        observed_to_seconds=observed_to_seconds,
+        is_active=active,
     )
     return TrackPageResponse(
         page=page,
