@@ -10,6 +10,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     database_path = tmp_path / "runtime" / "test.db"
     model_path = tmp_path / "models" / "test.onnx"
     local_video_path = tmp_path / "samples" / "test.mp4"
+    snapshot_dir = tmp_path / "snapshots"
     log_path = tmp_path / "logs" / "test.jsonl"
 
     monkeypatch.setenv("CCTV_APP_ENV", "test")
@@ -25,6 +26,8 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
     monkeypatch.setenv("CCTV_MODEL_PATH", str(model_path))
     monkeypatch.setenv("CCTV_LOCAL_VIDEO_PATH", str(local_video_path))
+    monkeypatch.setenv("CCTV_SNAPSHOT_DIR", str(snapshot_dir))
+    monkeypatch.setenv("CCTV_SNAPSHOT_JPEG_QUALITY", "95")
     monkeypatch.setenv("HIPERWALL_AUTH_MODE", "TOKEN")
     monkeypatch.setenv("HIPERWALL_TOKEN", "test-token")
     monkeypatch.setenv("HIPERWALL_BASE_URL", "http://hiperwall-host:8000")
@@ -45,6 +48,8 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.database_path == database_path
     assert settings.model_path == model_path
     assert settings.local_video_path == local_video_path
+    assert settings.snapshot_dir == snapshot_dir
+    assert settings.snapshot_jpeg_quality == 95
     assert settings.hiperwall_auth_mode == "token"
     assert settings.hiperwall_token is not None
     assert settings.hiperwall_token.get_secret_value() == "test-token"
@@ -94,6 +99,8 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("ai_device", "gpu"),
         ("analysis_fps", 0),
         ("analysis_fps", 31),
+        ("snapshot_jpeg_quality", 0),
+        ("snapshot_jpeg_quality", 101),
     ],
 )
 def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:

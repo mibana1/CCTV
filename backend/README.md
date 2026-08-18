@@ -51,10 +51,12 @@ with LocalVideoDecoder("sample.mp4", sample_fps=2) as decoder:
 
 로컬 디코더는 API와 별도인 단일 실행 워커에서 구동합니다. 입력 경로는 명령행
 인자 또는 `CCTV_LOCAL_VIDEO_PATH`로 지정하고, 개발 중에는 처리할 샘플 수를
-제한할 수 있습니다. 현재 기본 소비자는 프레임을 저장하지 않으며 다음 단계에서
-스냅샷 저장기나 YOLO 추론기로 교체합니다.
+제한할 수 있습니다. 코어 워커의 기본 소비자는 프레임을 저장하지 않지만 CLI에서
+`--save-snapshots`를 사용하면 각 실행의 고유 하위 디렉터리에 JPEG를 원자적으로
+저장합니다. 파일명에는 샘플 번호, 원본 프레임 번호와 타임스탬프가 포함되며
+기존 실행 결과를 덮어쓰지 않습니다.
 
 ```bash
-uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10
+uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10 --save-snapshots
 docker compose --profile local-video run --rm --build local-video-worker
 ```

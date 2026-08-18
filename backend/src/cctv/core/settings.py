@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     log_path: Path = Path("runtime/logs/cctv.jsonl")
     log_max_bytes: int = Field(default=10_485_760, ge=1_024)
     log_backup_count: int = Field(default=5, ge=0, le=100)
+    snapshot_dir: Path = Path("runtime/snapshots")
+    snapshot_jpeg_quality: int = Field(default=90, ge=1, le=100)
 
     database_path: Path = Path("runtime/cctv.db")
     model_path: Path = Path("artifacts/models/model.onnx")
@@ -95,7 +97,7 @@ class Settings(BaseSettings):
         """Accept case-insensitive authentication mode values."""
         return value.lower() if isinstance(value, str) else value
 
-    @field_validator("database_path", "model_path", "log_path")
+    @field_validator("database_path", "model_path", "log_path", "snapshot_dir")
     @classmethod
     def resolve_project_path(cls, value: Path) -> Path:
         """Resolve relative runtime paths from the repository root."""

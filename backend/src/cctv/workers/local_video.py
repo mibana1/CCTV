@@ -13,7 +13,13 @@ from time import perf_counter
 
 from cctv.core.logging import configure_logging, shutdown_logging
 from cctv.core.settings import get_settings
-from cctv.media import DecodedFrame, LocalVideoDecoder, VideoMetadata
+from cctv.media import (
+    DecodedFrame,
+    LocalVideoDecoder,
+    SnapshotWriter,
+    VideoMetadata,
+    build_snapshot_run_directory,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -223,12 +229,23 @@ def positive_integer(value: str) -> int:
     return parsed
 
 
+def jpeg_quality(value: str) -> int:
+    """Parse a valid JPEG quality for an argparse option."""
+    parsed = int(value)
+    if not 1 <= parsed <= 100:
+        raise argparse.ArgumentTypeError("value must be between 1 and 100")
+    return parsed
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for a local video worker run."""
     parser = argparse.ArgumentParser(description="Decode and sample one local video file")
     parser.add_argument("video_path", nargs="?", type=Path)
     parser.add_argument("--sample-fps", type=float)
     parser.add_argument("--max-samples", type=positive_integer)
+    parser.add_argument("--save-snapshots", action="store_true")
+    parser.add_argument("--snapshot-dir", type=Path)
+    parser.add_argument("--jpeg-quality", type=jpeg_quality)
     return parser
 
 
@@ -240,6 +257,9 @@ def run(argv: Sequence[str] | None = None) -> None:
     video_path = arguments.video_path or settings.local_video_path
     if video_path is None:
         parser.error("video_path or CCTV_LOCAL_VIDEO_PATH is required")
+    save_snapshots = arguments.save_snapshots or arguments.snapshot_dir is not None
+    if arguments.jpeg_quality is not None and not save_snapshots:
+        parser.error("--jpeg-quality requires --save-snapshots or --snapshot-dir")
 
     configure_logging(
         level=settings.log_level,
@@ -248,13 +268,45 @@ def run(argv: Sequence[str] | None = None) -> None:
         backup_count=settings.log_backup_count,
     )
     try:
+        snapshot_writer: SnapshotWriter | None = None
+        if save_snapshots:
+            snapshot_root = arguments.snapshot_dir or settings.snapshot_dir
+            snapshot_writer = SnapshotWriter(
+                build_snapshot_run_directory(snapshot_root, video_path),
+                jpeg_quality=(
+                    arguments.jpeg_quality
+                    if arguments.jpeg_quality is not None
+                    else settings.snapshot_jpeg_quality
+                ),
+            )
         result = LocalVideoWorker(
             video_path,
             sample_fps=(
                 arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
             ),
+            frame_consumer=snapshot_writer,
             max_samples=arguments.max_samples,
         ).execute()
-        print(json.dumps(asdict(result), default=str, ensure_ascii=False, sort_keys=True))
+        output = asdict(result)
+        if snapshot_writer is not None:
+            output["snapshots"] = {
+                "output_dir": snapshot_writer.output_dir,
+                "saved_count": snapshot_writer.saved_count,
+                "first_path": snapshot_writer.first_path,
+                "last_path": snapshot_writer.last_path,
+                "jpeg_quality": snapshot_writer.jpeg_quality,
+            }
+            logger.info(
+                "Snapshot run complete",
+                extra={
+                    "event": "snapshot_run_completed",
+                    "snapshot_dir": snapshot_writer.output_dir,
+                    "saved_count": snapshot_writer.saved_count,
+                    "first_snapshot_path": snapshot_writer.first_path,
+                    "last_snapshot_path": snapshot_writer.last_path,
+                    "jpeg_quality": snapshot_writer.jpeg_quality,
+                },
+            )
+        print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))
     finally:
         shutdown_logging()

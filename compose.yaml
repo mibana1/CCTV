@@ -54,12 +54,15 @@ services:
       - run
       - --no-sync
       - cctv-local-worker
+      - --save-snapshots
       - --max-samples
       - ${LOCAL_VIDEO_MAX_SAMPLES:-10}
     environment:
       CCTV_APP_ENV: development
       CCTV_ANALYSIS_FPS: ${CCTV_ANALYSIS_FPS:-2}
       CCTV_LOCAL_VIDEO_PATH: /samples/${LOCAL_VIDEO_FILE:-testvideo1.mp4}
+      CCTV_SNAPSHOT_DIR: /runtime/snapshots
+      CCTV_SNAPSHOT_JPEG_QUALITY: ${CCTV_SNAPSHOT_JPEG_QUALITY:-90}
       CCTV_LOG_LEVEL: ${CCTV_LOG_LEVEL:-INFO}
       CCTV_LOG_PATH: /runtime/logs/cctv.jsonl
       CCTV_LOG_MAX_BYTES: ${CCTV_LOG_MAX_BYTES:-10485760}

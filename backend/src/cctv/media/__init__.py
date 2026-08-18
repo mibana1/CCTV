@@ -16,6 +16,14 @@ from cctv.media.decode import (
     VideoMetadata,
     iter_local_video_frames,
 )
+from cctv.media.snapshot import (
+    SnapshotEncodingError,
+    SnapshotError,
+    SnapshotRecord,
+    SnapshotWriteError,
+    SnapshotWriter,
+    build_snapshot_run_directory,
+)
 
 __all__ = [
     "DecodedFrame",
@@ -23,6 +31,12 @@ __all__ = [
     "LocalVideoDecoder",
     "LocalVideoError",
     "LocalVideoOpenError",
+    "SnapshotEncodingError",
+    "SnapshotError",
+    "SnapshotRecord",
+    "SnapshotWriteError",
+    "SnapshotWriter",
     "VideoMetadata",
+    "build_snapshot_run_directory",
     "iter_local_video_frames",
 ]

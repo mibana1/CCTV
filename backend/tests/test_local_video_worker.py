@@ -1,8 +1,9 @@
 from pathlib import Path
 
+import cv2
 import pytest
 
-from cctv.media import DecodedFrame
+from cctv.media import DecodedFrame, SnapshotWriter
 from cctv.workers import LocalVideoWorker, WorkerStatus, WorkerStopReason
 from tests.video_factory import create_test_video
 
@@ -42,6 +43,28 @@ def test_local_video_worker_honors_sample_limit(tmp_path: Path) -> None:
     assert result.stop_reason is WorkerStopReason.SAMPLE_LIMIT
     assert result.processed_samples == 2
     assert result.last_source_index == 2
+
+
+def test_local_video_worker_saves_samples_through_snapshot_consumer(tmp_path: Path) -> None:
+    video_path = create_test_video(tmp_path / "sample.avi")
+    snapshot_writer = SnapshotWriter(tmp_path / "snapshots")
+    worker = LocalVideoWorker(
+        video_path,
+        sample_fps=2,
+        frame_consumer=snapshot_writer,
+        max_samples=2,
+    )
+
+    result = worker.execute()
+
+    snapshots = sorted(snapshot_writer.output_dir.glob("*.jpg"))
+    assert result.processed_samples == 2
+    assert snapshot_writer.saved_count == 2
+    assert [path.name for path in snapshots] == [
+        "sample_000000_frame_000000000_t000000000000ms.jpg",
+        "sample_000001_frame_000000002_t000000000500ms.jpg",
+    ]
+    assert all(cv2.imread(str(path)) is not None for path in snapshots)
 
 
 def test_local_video_worker_honors_consumer_stop_request(tmp_path: Path) -> None:
