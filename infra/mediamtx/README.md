@@ -20,7 +20,7 @@ docker compose --profile rtsp-test up -d mediamtx rtsp-test-publisher
 분석 워커를 10개 샘플로 제한해 확인하려면 다음을 실행합니다.
 
 ```bash
-CCTV_YOLO_ENABLED=true \
+CCTV_DETECTOR_ENABLED=true \
 docker compose --profile rtsp run --rm --build rtsp-worker --max-samples 10 --save-snapshots
 ```
 

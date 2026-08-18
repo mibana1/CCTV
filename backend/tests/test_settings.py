@@ -18,6 +18,11 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_APP_MODE", "LIVE")
     monkeypatch.setenv("CCTV_AI_DEVICE", "CUDA")
     monkeypatch.setenv("CCTV_ANALYSIS_FPS", "5")
+    monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "true")
+    monkeypatch.setenv("CCTV_DETECTOR_TYPE", "CUSTOM_DETECTOR")
+    monkeypatch.setenv("CCTV_DETECTOR_INPUT_SIZE", "512")
+    monkeypatch.setenv("CCTV_DETECTOR_CONFIDENCE_THRESHOLD", "0.35")
+    monkeypatch.setenv("CCTV_DETECTOR_NMS_THRESHOLD", "0.4")
     monkeypatch.setenv("CCTV_YOLO_ENABLED", "true")
     monkeypatch.setenv("CCTV_YOLO_INPUT_SIZE", "320")
     monkeypatch.setenv("CCTV_YOLO_CONFIDENCE_THRESHOLD", "0.4")
@@ -59,6 +64,12 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.app_mode is AppMode.LIVE
     assert settings.ai_device is AiDevice.CUDA
     assert settings.analysis_fps == 5
+    assert settings.detector_enabled is True
+    assert settings.detector_type == "custom_detector"
+    assert settings.effective_detector_input_size == 512
+    assert settings.effective_detector_confidence_threshold == 0.35
+    assert settings.effective_detector_nms_threshold == 0.4
+    assert settings.object_detection_enabled is True
     assert settings.yolo_enabled is True
     assert settings.yolo_input_size == 320
     assert settings.yolo_confidence_threshold == 0.4
@@ -120,6 +131,11 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_APP_MODE",
         "CCTV_AI_DEVICE",
         "CCTV_ANALYSIS_FPS",
+        "CCTV_DETECTOR_ENABLED",
+        "CCTV_DETECTOR_TYPE",
+        "CCTV_DETECTOR_INPUT_SIZE",
+        "CCTV_DETECTOR_CONFIDENCE_THRESHOLD",
+        "CCTV_DETECTOR_NMS_THRESHOLD",
         "CCTV_YOLO_ENABLED",
         "CCTV_TRACKING_ENABLED",
         "CCTV_PERSIST_DETECTIONS",
@@ -132,6 +148,12 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.app_mode is AppMode.DRY_RUN
     assert settings.ai_device is AiDevice.CPU
     assert settings.analysis_fps == 2
+    assert settings.detector_enabled is False
+    assert settings.detector_type == "yolo_onnx"
+    assert settings.effective_detector_input_size == 640
+    assert settings.effective_detector_confidence_threshold == 0.25
+    assert settings.effective_detector_nms_threshold == 0.45
+    assert settings.object_detection_enabled is False
     assert settings.yolo_enabled is False
     assert settings.yolo_input_size == 640
     assert settings.yolo_confidence_threshold == 0.25
@@ -152,6 +174,10 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("ai_device", "gpu"),
         ("analysis_fps", 0),
         ("analysis_fps", 31),
+        ("detector_type", "invalid detector"),
+        ("detector_input_size", 31),
+        ("detector_confidence_threshold", 0),
+        ("detector_nms_threshold", 1.1),
         ("yolo_input_size", 31),
         ("yolo_input_size", 4097),
         ("yolo_confidence_threshold", 0),

@@ -31,13 +31,13 @@ def test_health_initializes_database(tmp_path: Path) -> None:
         "checks": {
             "database": {
                 "status": "ok",
-                "schema_version": 6,
+                "schema_version": 7,
                 "journal_mode": "wal",
             }
         },
     }
     assert database_path.is_file()
-    assert client.app.state.database.schema_version == 6
+    assert client.app.state.database.schema_version == 7
 
     log_records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     events = {record["event"] for record in log_records}
@@ -65,6 +65,8 @@ def test_health_initializes_database(tmp_path: Path) -> None:
     assert startup_record["app_mode"] == "dry_run"
     assert startup_record["ai_device"] == "cpu"
     assert startup_record["analysis_fps"] == 2
+    assert startup_record["detector_enabled"] is False
+    assert startup_record["detector_type"] == "yolo_onnx"
 
 
 def test_health_returns_service_unavailable_when_database_is_missing(tmp_path: Path) -> None:

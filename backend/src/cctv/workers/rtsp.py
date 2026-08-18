@@ -1,4 +1,4 @@
-"""Long-running RTSP sampling and CPU YOLO analysis worker."""
+"""Long-running RTSP sampling and interchangeable object-detection worker."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from time import perf_counter
 from types import FrameType
 
 from cctv.core.logging import configure_logging, shutdown_logging
-from cctv.core.settings import AiDevice, get_settings
+from cctv.core.settings import get_settings
 from cctv.db import (
     AnalysisRunRecord,
     AnalysisRunStatus,
@@ -24,7 +24,7 @@ from cctv.db import (
     RuleRepository,
     initialize_database,
 )
-from cctv.inference import CpuYoloDetector, IoUTracker, load_class_names
+from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
 from cctv.media import (
     DecodedFrame,
     RtspStreamReader,
@@ -242,7 +242,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-snapshots", action="store_true")
     parser.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--jpeg-quality", type=jpeg_quality)
-    parser.add_argument("--analyze-yolo", action="store_true")
+    parser.add_argument(
+        "--analyze",
+        "--analyze-yolo",
+        dest="analyze",
+        action="store_true",
+        help="enable the configured object detector (--analyze-yolo is deprecated)",
+    )
     parser.add_argument("--model-path", type=Path)
     parser.add_argument("--class-names-path", type=Path)
     parser.add_argument("--model-input-size", type=model_input_size)
@@ -252,7 +258,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def run(argv: Sequence[str] | None = None) -> None:
-    """Run RTSP ingestion with optional snapshots and persisted CPU YOLO results."""
+    """Run RTSP ingestion with snapshots and optional persisted detection results."""
     settings = get_settings()
     parser = build_argument_parser()
     arguments = parser.parse_args(argv)
@@ -264,18 +270,16 @@ def run(argv: Sequence[str] | None = None) -> None:
     save_snapshots = arguments.save_snapshots or arguments.snapshot_dir is not None
     if arguments.jpeg_quality is not None and not save_snapshots:
         parser.error("--jpeg-quality requires --save-snapshots or --snapshot-dir")
-    analyze_yolo = arguments.analyze_yolo or arguments.model_path is not None
-    analyze_yolo = analyze_yolo or settings.yolo_enabled
-    yolo_options = (
+    analyze_objects = arguments.analyze or arguments.model_path is not None
+    analyze_objects = analyze_objects or settings.object_detection_enabled
+    detector_options = (
         arguments.class_names_path,
         arguments.model_input_size,
         arguments.confidence_threshold,
         arguments.nms_threshold,
     )
-    if any(option is not None for option in yolo_options) and not analyze_yolo:
-        parser.error("YOLO tuning options require --analyze-yolo or CCTV_YOLO_ENABLED=true")
-    if analyze_yolo and settings.ai_device is not AiDevice.CPU:
-        parser.error("CPU YOLO analysis requires CCTV_AI_DEVICE=cpu")
+    if any(option is not None for option in detector_options) and not analyze_objects:
+        parser.error("detector options require --analyze or CCTV_DETECTOR_ENABLED=true")
     effective_sample_fps = (
         arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
     )
@@ -289,30 +293,32 @@ def run(argv: Sequence[str] | None = None) -> None:
     )
     try:
         consumers: list[FrameConsumer] = []
-        detector: CpuYoloDetector | None = None
+        detector: ObjectDetector | None = None
         tracker: IoUTracker | None = None
         repository: DetectionRepository | None = None
         rule_engine: RuleEngine | None = None
         emitted_rule_events = 0
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
-        if analyze_yolo:
-            detector = CpuYoloDetector(
-                arguments.model_path or settings.model_path,
-                class_names=load_class_names(
-                    arguments.class_names_path or settings.model_classes_path
-                ),
-                input_size=arguments.model_input_size or settings.yolo_input_size,
-                confidence_threshold=(
-                    arguments.confidence_threshold
-                    if arguments.confidence_threshold is not None
-                    else settings.yolo_confidence_threshold
-                ),
-                nms_threshold=(
-                    arguments.nms_threshold
-                    if arguments.nms_threshold is not None
-                    else settings.yolo_nms_threshold
-                ),
+        if analyze_objects:
+            detector = create_detector(
+                DetectorConfig(
+                    detector_type=settings.detector_type,
+                    model_path=arguments.model_path or settings.model_path,
+                    class_names_path=(arguments.class_names_path or settings.model_classes_path),
+                    device=settings.ai_device.value,
+                    input_size=arguments.model_input_size or settings.effective_detector_input_size,
+                    confidence_threshold=(
+                        arguments.confidence_threshold
+                        if arguments.confidence_threshold is not None
+                        else settings.effective_detector_confidence_threshold
+                    ),
+                    nms_threshold=(
+                        arguments.nms_threshold
+                        if arguments.nms_threshold is not None
+                        else settings.effective_detector_nms_threshold
+                    ),
+                )
             )
             if settings.tracking_enabled:
                 tracker = IoUTracker(
@@ -323,15 +329,17 @@ def run(argv: Sequence[str] | None = None) -> None:
             if settings.persist_detections:
                 initialize_database(settings.database_path)
                 repository = DetectionRepository(settings.database_path)
+                metadata = detector.metadata
                 analysis_run = repository.create_analysis_run(
                     source_type="rtsp",
                     source_name=source_name,
-                    model_name=detector.model_path.name,
-                    model_sha256=detector.model_sha256,
-                    device="cpu",
-                    input_size=detector.input_size,
-                    confidence_threshold=detector.confidence_threshold,
-                    nms_threshold=detector.nms_threshold,
+                    detector_type=metadata.detector_type,
+                    model_name=metadata.model_name,
+                    model_sha256=metadata.model_sha256,
+                    device=metadata.device,
+                    input_size=metadata.input_size,
+                    confidence_threshold=metadata.confidence_threshold,
+                    nms_threshold=metadata.nms_threshold,
                     sample_fps=effective_sample_fps,
                 )
                 if settings.rules_enabled and tracker is not None:

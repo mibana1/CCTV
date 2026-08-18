@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     app_mode: AppMode = AppMode.DRY_RUN
     ai_device: AiDevice = AiDevice.CPU
     analysis_fps: float = Field(default=2.0, gt=0, le=30)
+    detector_enabled: bool = False
+    detector_type: str = "yolo_onnx"
+    detector_input_size: int | None = Field(default=None, ge=32, le=4096)
+    detector_confidence_threshold: float | None = Field(default=None, gt=0, le=1)
+    detector_nms_threshold: float | None = Field(default=None, ge=0, le=1)
+    # Deprecated compatibility settings. Generic detector settings take precedence.
     yolo_enabled: bool = False
     yolo_input_size: int = Field(default=640, ge=32, le=4096)
     yolo_confidence_threshold: float = Field(default=0.25, gt=0, le=1)
@@ -119,6 +125,17 @@ class Settings(BaseSettings):
         """Accept case-insensitive authentication mode values."""
         return value.lower() if isinstance(value, str) else value
 
+    @field_validator("detector_type")
+    @classmethod
+    def normalize_detector_type(cls, value: str) -> str:
+        """Normalize a registry key while allowing future detector adapters."""
+        normalized = value.strip().casefold()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", normalized):
+            raise ValueError(
+                "detector type must be 1-64 lowercase letters, numbers, underscores, or hyphens"
+            )
+        return normalized
+
     @field_validator("database_path", "model_path", "log_path", "snapshot_dir")
     @classmethod
     def resolve_project_path(cls, value: Path) -> Path:
@@ -183,6 +200,25 @@ class Settings(BaseSettings):
     def external_actions_enabled(self) -> bool:
         """Report whether external side effects may be executed."""
         return self.app_mode is AppMode.LIVE
+
+    @property
+    def object_detection_enabled(self) -> bool:
+        """Honor the generic switch while retaining CCTV_YOLO_ENABLED compatibility."""
+        return self.detector_enabled or self.yolo_enabled
+
+    @property
+    def effective_detector_input_size(self) -> int:
+        return self.detector_input_size or self.yolo_input_size
+
+    @property
+    def effective_detector_confidence_threshold(self) -> float:
+        return self.detector_confidence_threshold or self.yolo_confidence_threshold
+
+    @property
+    def effective_detector_nms_threshold(self) -> float:
+        if self.detector_nms_threshold is not None:
+            return self.detector_nms_threshold
+        return self.yolo_nms_threshold
 
 
 @lru_cache(maxsize=1)

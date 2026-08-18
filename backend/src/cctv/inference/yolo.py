@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from hashlib import file_digest
 from math import isfinite
 from pathlib import Path
@@ -13,6 +13,13 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from cctv.inference.models import (
+    BoundingBox,
+    Detection,
+    DetectorMetadata,
+    DetectorRunSummary,
+    FrameDetections,
+)
 from cctv.media import DecodedFrame
 
 logger = logging.getLogger(__name__)
@@ -121,55 +128,7 @@ class _DnnNetwork(Protocol):
     def forward(self) -> NDArray[np.float32] | Sequence[NDArray[np.float32]]: ...
 
 
-@dataclass(frozen=True, slots=True)
-class BoundingBox:
-    """Pixel coordinates in the original frame, using an exclusive lower-right edge."""
-
-    x1: int
-    y1: int
-    x2: int
-    y2: int
-
-
-@dataclass(frozen=True, slots=True)
-class Detection:
-    """One normalized object detection."""
-
-    class_id: int
-    label: str
-    confidence: float
-    box: BoundingBox
-    track_id: int | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class FrameDetections:
-    """Detection result for one sampled video frame."""
-
-    source_index: int
-    sample_index: int
-    timestamp_seconds: float
-    frame_width: int
-    frame_height: int
-    inference_seconds: float
-    detections: tuple[Detection, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class YoloRunSummary:
-    """Bounded aggregate statistics for a detector instance."""
-
-    model_path: Path
-    model_name: str
-    model_sha256: str
-    device: str
-    input_size: int
-    confidence_threshold: float
-    nms_threshold: float
-    processed_frames: int
-    total_detections: int
-    total_inference_seconds: float
-    average_inference_seconds: float
+YoloRunSummary = DetectorRunSummary
 
 
 def load_class_names(path: str | Path | None) -> tuple[str, ...]:
@@ -266,14 +225,10 @@ class CpuYoloDetector:
         )
 
     @property
-    def summary(self) -> YoloRunSummary:
-        """Return aggregate inference statistics without retaining frame images."""
-        average = (
-            self._total_inference_seconds / self._processed_frames
-            if self._processed_frames
-            else 0.0
-        )
-        return YoloRunSummary(
+    def metadata(self) -> DetectorMetadata:
+        """Return detector-independent identity used by run persistence."""
+        return DetectorMetadata(
+            detector_type="yolo_onnx",
             model_path=self.model_path,
             model_name=self.model_path.name,
             model_sha256=self.model_sha256,
@@ -281,6 +236,26 @@ class CpuYoloDetector:
             input_size=self.input_size,
             confidence_threshold=self.confidence_threshold,
             nms_threshold=self.nms_threshold,
+        )
+
+    @property
+    def summary(self) -> DetectorRunSummary:
+        """Return aggregate inference statistics without retaining frame images."""
+        average = (
+            self._total_inference_seconds / self._processed_frames
+            if self._processed_frames
+            else 0.0
+        )
+        metadata = self.metadata
+        return DetectorRunSummary(
+            detector_type=metadata.detector_type,
+            model_path=metadata.model_path,
+            model_name=metadata.model_name,
+            model_sha256=metadata.model_sha256,
+            device=metadata.device,
+            input_size=metadata.input_size,
+            confidence_threshold=metadata.confidence_threshold,
+            nms_threshold=metadata.nms_threshold,
             processed_frames=self._processed_frames,
             total_detections=self._total_detections,
             total_inference_seconds=round(self._total_inference_seconds, 6),

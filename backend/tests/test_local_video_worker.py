@@ -7,6 +7,13 @@ import pytest
 
 from cctv.core.settings import get_settings
 from cctv.db import AnalysisRunStatus, DetectionRepository, RuleRepository, initialize_database
+from cctv.inference import (
+    BoundingBox,
+    Detection,
+    DetectorMetadata,
+    DetectorRunSummary,
+    FrameDetections,
+)
 from cctv.media import DecodedFrame, SnapshotWriter
 from cctv.workers import (
     LocalVideoWorker,
@@ -214,6 +221,81 @@ def test_local_video_cli_persists_yolo_results(
     assert runs.items[0].total_detections == 2
     assert repository.list_detections(analysis_run_id=runs.items[0].id).total == 2
     assert rule_repository.list_events(analysis_run_id=runs.items[0].id).total == 1
+
+
+def test_local_video_cli_uses_interchangeable_detector_interface(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class CustomDetector:
+        def __init__(self) -> None:
+            self.processed_frames = 0
+            self.metadata = DetectorMetadata(
+                detector_type="custom",
+                model_path=tmp_path / "custom.model",
+                model_name="custom.model",
+                model_sha256="c" * 64,
+                device="cpu",
+                input_size=320,
+                confidence_threshold=0.4,
+                nms_threshold=0,
+            )
+
+        @property
+        def summary(self) -> DetectorRunSummary:
+            return DetectorRunSummary(
+                detector_type=self.metadata.detector_type,
+                model_path=self.metadata.model_path,
+                model_name=self.metadata.model_name,
+                model_sha256=self.metadata.model_sha256,
+                device=self.metadata.device,
+                input_size=self.metadata.input_size,
+                confidence_threshold=self.metadata.confidence_threshold,
+                nms_threshold=self.metadata.nms_threshold,
+                processed_frames=self.processed_frames,
+                total_detections=self.processed_frames,
+                total_inference_seconds=0,
+                average_inference_seconds=0,
+            )
+
+        def analyze(self, frame: DecodedFrame) -> FrameDetections:
+            self.processed_frames += 1
+            return FrameDetections(
+                source_index=frame.source_index,
+                sample_index=frame.sample_index,
+                timestamp_seconds=frame.timestamp_seconds,
+                frame_width=frame.image.shape[1],
+                frame_height=frame.image.shape[0],
+                inference_seconds=0,
+                detections=(Detection(0, "custom-object", 0.9, BoundingBox(1, 1, 10, 10)),),
+            )
+
+    detector = CustomDetector()
+    video_path = create_test_video(tmp_path / "sample.avi")
+    monkeypatch.setattr(
+        "cctv.workers.local_video.create_detector",
+        lambda config: detector,
+    )
+    monkeypatch.setenv("CCTV_DETECTOR_TYPE", "custom")
+    monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
+    monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "cctv.jsonl"))
+    get_settings.cache_clear()
+
+    try:
+        run_local_video_worker(
+            [str(video_path), "--analyze", "--sample-fps", "2", "--max-samples", "1"]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    output = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert detector.processed_frames == 1
+    assert output["analysis"]["detector_type"] == "custom"
+    assert output["analysis"]["model_name"] == "custom.model"
+    assert output["analysis"]["tracking"]["assigned_detections"] == 1
 
 
 @pytest.mark.parametrize("max_samples", [0, -1])

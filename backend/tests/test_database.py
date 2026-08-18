@@ -10,6 +10,7 @@ from cctv.db.migrations.v0002_detection_results import apply as apply_v0002
 from cctv.db.migrations.v0003_detection_tracking import apply as apply_v0003
 from cctv.db.migrations.v0004_track_history import apply as apply_v0004
 from cctv.db.migrations.v0005_track_active_state import apply as apply_v0005
+from cctv.db.migrations.v0007_detector_type import apply as apply_v0007
 
 
 def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) -> None:
@@ -19,9 +20,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 6
-    assert first.applied_migrations == (1, 2, 3, 4, 5, 6)
-    assert second.schema_version == 6
+    assert first.schema_version == 7
+    assert first.applied_migrations == (1, 2, 3, 4, 5, 6, 7)
+    assert second.schema_version == 7
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -53,6 +54,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 4, "name": "track_history_schema"},
             {"version": 5, "name": "track_active_state_schema"},
             {"version": 6, "name": "rule_engine_schema"},
+            {"version": 7, "name": "detector_type"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -88,7 +90,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 6
+    assert health.schema_version == 7
     assert health.journal_mode == "wal"
 
 
@@ -99,6 +101,31 @@ def test_check_database_health_does_not_create_a_missing_database(tmp_path: Path
         check_database_health(database_path)
 
     assert not database_path.exists()
+
+
+def test_detector_type_migration_backfills_historical_runs(tmp_path: Path) -> None:
+    database_path = tmp_path / "historical.db"
+    with closing(connect_database(database_path)) as connection, connection:
+        apply_v0001(connection)
+        apply_v0002(connection)
+        connection.execute(
+            """
+            INSERT INTO analysis_runs (
+                id, source_type, source_name, model_name, model_sha256, device,
+                input_size, confidence_threshold, nms_threshold, sample_fps,
+                status, started_at
+            ) VALUES ('old-run', 'local_video', 'sample.mp4', 'model.onnx', ?,
+                'cpu', 640, 0.25, 0.45, 2, 'running', '2026-08-18T00:00:00Z')
+            """,
+            ("a" * 64,),
+        )
+
+        apply_v0007(connection)
+        detector_type = connection.execute(
+            "SELECT detector_type FROM analysis_runs WHERE id = 'old-run'"
+        ).fetchone()[0]
+
+    assert detector_type == "yolo_onnx"
 
 
 def test_track_history_migration_backfills_existing_tracked_detections(tmp_path: Path) -> None:

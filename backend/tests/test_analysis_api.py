@@ -120,6 +120,7 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
         assert run_detail.json()["processed_frames"] == 3
         assert run_detail.json()["total_detections"] == 3
         assert run_detail.json()["source_name"] == "first.mp4"
+        assert run_detail.json()["detector_type"] == "yolo_onnx"
         assert "model_path" not in run_detail.json()
 
         assert detections.status_code == 200

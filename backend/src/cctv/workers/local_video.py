@@ -12,7 +12,7 @@ from threading import Event, Lock
 from time import perf_counter
 
 from cctv.core.logging import configure_logging, shutdown_logging
-from cctv.core.settings import AiDevice, get_settings
+from cctv.core.settings import get_settings
 from cctv.db import (
     AnalysisRunRecord,
     AnalysisRunStatus,
@@ -20,7 +20,7 @@ from cctv.db import (
     RuleRepository,
     initialize_database,
 )
-from cctv.inference import CpuYoloDetector, IoUTracker, load_class_names
+from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
 from cctv.media import (
     DecodedFrame,
     LocalVideoDecoder,
@@ -292,7 +292,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-snapshots", action="store_true")
     parser.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--jpeg-quality", type=jpeg_quality)
-    parser.add_argument("--analyze-yolo", action="store_true")
+    parser.add_argument(
+        "--analyze",
+        "--analyze-yolo",
+        dest="analyze",
+        action="store_true",
+        help="enable the configured object detector (--analyze-yolo is deprecated)",
+    )
     parser.add_argument("--model-path", type=Path)
     parser.add_argument("--class-names-path", type=Path)
     parser.add_argument("--model-input-size", type=model_input_size)
@@ -302,7 +308,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
 
 
 def run(argv: Sequence[str] | None = None) -> None:
-    """Run a local video worker with optional snapshots and CPU YOLO analysis."""
+    """Run a local video worker with optional snapshots and object detection."""
     settings = get_settings()
     parser = build_argument_parser()
     arguments = parser.parse_args(argv)
@@ -312,18 +318,16 @@ def run(argv: Sequence[str] | None = None) -> None:
     save_snapshots = arguments.save_snapshots or arguments.snapshot_dir is not None
     if arguments.jpeg_quality is not None and not save_snapshots:
         parser.error("--jpeg-quality requires --save-snapshots or --snapshot-dir")
-    analyze_yolo = arguments.analyze_yolo or arguments.model_path is not None
-    analyze_yolo = analyze_yolo or settings.yolo_enabled
-    yolo_options = (
+    analyze_objects = arguments.analyze or arguments.model_path is not None
+    analyze_objects = analyze_objects or settings.object_detection_enabled
+    detector_options = (
         arguments.class_names_path,
         arguments.model_input_size,
         arguments.confidence_threshold,
         arguments.nms_threshold,
     )
-    if any(option is not None for option in yolo_options) and not analyze_yolo:
-        parser.error("YOLO tuning options require --analyze-yolo or CCTV_YOLO_ENABLED=true")
-    if analyze_yolo and settings.ai_device is not AiDevice.CPU:
-        parser.error("CPU YOLO analysis requires CCTV_AI_DEVICE=cpu")
+    if any(option is not None for option in detector_options) and not analyze_objects:
+        parser.error("detector options require --analyze or CCTV_DETECTOR_ENABLED=true")
     effective_sample_fps = (
         arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
     )
@@ -336,30 +340,32 @@ def run(argv: Sequence[str] | None = None) -> None:
     )
     try:
         frame_consumers: list[FrameConsumer] = []
-        yolo_detector: CpuYoloDetector | None = None
+        detector: ObjectDetector | None = None
         tracker: IoUTracker | None = None
         detection_repository: DetectionRepository | None = None
         rule_engine: RuleEngine | None = None
         emitted_rule_events = 0
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
-        if analyze_yolo:
-            yolo_detector = CpuYoloDetector(
-                arguments.model_path or settings.model_path,
-                class_names=load_class_names(
-                    arguments.class_names_path or settings.model_classes_path
-                ),
-                input_size=arguments.model_input_size or settings.yolo_input_size,
-                confidence_threshold=(
-                    arguments.confidence_threshold
-                    if arguments.confidence_threshold is not None
-                    else settings.yolo_confidence_threshold
-                ),
-                nms_threshold=(
-                    arguments.nms_threshold
-                    if arguments.nms_threshold is not None
-                    else settings.yolo_nms_threshold
-                ),
+        if analyze_objects:
+            detector = create_detector(
+                DetectorConfig(
+                    detector_type=settings.detector_type,
+                    model_path=arguments.model_path or settings.model_path,
+                    class_names_path=(arguments.class_names_path or settings.model_classes_path),
+                    device=settings.ai_device.value,
+                    input_size=arguments.model_input_size or settings.effective_detector_input_size,
+                    confidence_threshold=(
+                        arguments.confidence_threshold
+                        if arguments.confidence_threshold is not None
+                        else settings.effective_detector_confidence_threshold
+                    ),
+                    nms_threshold=(
+                        arguments.nms_threshold
+                        if arguments.nms_threshold is not None
+                        else settings.effective_detector_nms_threshold
+                    ),
+                )
             )
             if settings.tracking_enabled:
                 tracker = IoUTracker(
@@ -370,15 +376,17 @@ def run(argv: Sequence[str] | None = None) -> None:
             if settings.persist_detections:
                 initialize_database(settings.database_path)
                 detection_repository = DetectionRepository(settings.database_path)
+                metadata = detector.metadata
                 analysis_run = detection_repository.create_analysis_run(
                     source_type="local_video",
                     source_name=Path(video_path).name,
-                    model_name=yolo_detector.model_path.name,
-                    model_sha256=yolo_detector.model_sha256,
-                    device="cpu",
-                    input_size=yolo_detector.input_size,
-                    confidence_threshold=yolo_detector.confidence_threshold,
-                    nms_threshold=yolo_detector.nms_threshold,
+                    detector_type=metadata.detector_type,
+                    model_name=metadata.model_name,
+                    model_sha256=metadata.model_sha256,
+                    device=metadata.device,
+                    input_size=metadata.input_size,
+                    confidence_threshold=metadata.confidence_threshold,
+                    nms_threshold=metadata.nms_threshold,
                     sample_fps=effective_sample_fps,
                 )
                 if settings.rules_enabled and tracker is not None:
@@ -408,7 +416,7 @@ def run(argv: Sequence[str] | None = None) -> None:
             def analyze_frame(frame: DecodedFrame) -> None:
                 nonlocal emitted_rule_events
 
-                result = yolo_detector.analyze(frame)
+                result = detector.analyze(frame)
                 if tracker is not None:
                     result = tracker.update(result)
                 rule_events = rule_engine.process(result) if rule_engine is not None else ()
@@ -498,8 +506,8 @@ def run(argv: Sequence[str] | None = None) -> None:
                     "jpeg_quality": snapshot_writer.jpeg_quality,
                 },
             )
-        if yolo_detector is not None:
-            output["analysis"] = asdict(yolo_detector.summary)
+        if detector is not None:
+            output["analysis"] = asdict(detector.summary)
             output["analysis"]["persistence_enabled"] = settings.persist_detections
             output["analysis"]["analysis_run_id"] = (
                 analysis_run.id if analysis_run is not None else None
@@ -515,9 +523,9 @@ def run(argv: Sequence[str] | None = None) -> None:
                 "emitted_event_count": emitted_rule_events,
             }
             logger.info(
-                "CPU YOLO analysis run complete",
+                "Object detection run complete",
                 extra={
-                    "event": "yolo_run_completed",
+                    "event": "detector_run_completed",
                     "analysis_run_id": analysis_run.id if analysis_run is not None else None,
                     "persistence_enabled": settings.persist_detections,
                     "tracking_enabled": tracker is not None,
@@ -525,7 +533,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                     "rules_enabled": rule_engine is not None,
                     "loaded_rule_count": len(rule_engine.rules) if rule_engine is not None else 0,
                     "emitted_rule_event_count": emitted_rule_events,
-                    **asdict(yolo_detector.summary),
+                    **asdict(detector.summary),
                 },
             )
         print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))

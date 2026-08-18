@@ -79,7 +79,7 @@ Hiperwall이 이 중계 경로를 각각 읽습니다. 실제 카메라가 없�
 CCTV_RTSP_INPUT_URL=publisher \
 docker compose --profile rtsp-test up -d mediamtx rtsp-test-publisher
 
-CCTV_YOLO_ENABLED=true \
+CCTV_DETECTOR_ENABLED=true \
 docker compose --profile rtsp run --rm --build rtsp-worker \
   --max-samples 10 --save-snapshots
 ```
@@ -89,7 +89,13 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 Hiperwall에서 원본 영상을 읽을 주소는
 `rtsp://<Docker 호스트 IP>:8554/camera`입니다.
 
-YOLO 분석 시에는 기본으로 클래스별 IoU 객체 추적이 적용되어 각 검출 결과에
+객체 분석기는 `CCTV_DETECTOR_TYPE`으로 선택하며 기본값은 `yolo_onnx`입니다.
+공통 `ObjectDetector` 인터페이스를 구현해 등록하면 워커·추적·규칙·DB 코드를
+바꾸지 않고 다른 객체 검출 모델로 교체할 수 있습니다. 기존
+`CCTV_YOLO_ENABLED`도 호환되지만 신규 설정은 `CCTV_DETECTOR_ENABLED=true`를
+사용합니다.
+
+객체 분석 시에는 기본으로 클래스별 IoU 객체 추적이 적용되어 각 검출 결과에
 분석 실행 내에서 유효한 `track_id`가 저장됩니다. `/detections` 응답에서도 ID를
 확인할 수 있고, 특정 객체의 이력은
 `/detections?analysis_run_id=<run-id>&track_id=<track-id>`로 조회합니다. 추적을

@@ -42,6 +42,7 @@ class AnalysisRunRecord:
     id: str
     source_type: str
     source_name: str
+    detector_type: str
     camera_id: int | None
     model_name: str
     model_sha256: str
@@ -167,17 +168,21 @@ class DetectionRepository:
         confidence_threshold: float,
         nms_threshold: float,
         sample_fps: float,
+        detector_type: str = "yolo_onnx",
         camera_id: int | None = None,
         run_id: str | None = None,
     ) -> AnalysisRunRecord:
         """Create a running analysis record before frames are processed."""
         normalized_source_name = source_name.strip()
+        normalized_detector_type = detector_type.strip().casefold()
         normalized_model_name = model_name.strip()
         normalized_sha256 = model_sha256.strip().lower()
         if source_type not in {"local_video", "rtsp"}:
             raise ValueError("source_type must be local_video or rtsp")
         if not normalized_source_name:
             raise ValueError("source_name must not be empty")
+        if not normalized_detector_type:
+            raise ValueError("detector_type must not be empty")
         if not normalized_model_name:
             raise ValueError("model_name must not be empty")
         if len(normalized_sha256) != 64 or any(
@@ -191,16 +196,18 @@ class DetectionRepository:
             connection.execute(
                 """
                     INSERT INTO analysis_runs (
-                        id, source_type, source_name, camera_id, model_name, model_sha256,
+                        id, source_type, source_name, camera_id, detector_type,
+                        model_name, model_sha256,
                         device, input_size, confidence_threshold, nms_threshold, sample_fps,
                         status, started_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 (
                     identifier,
                     source_type,
                     normalized_source_name,
                     camera_id,
+                    normalized_detector_type,
                     normalized_model_name,
                     normalized_sha256,
                     device,
@@ -226,6 +233,7 @@ class DetectionRepository:
                 "analysis_run_id": record.id,
                 "source_type": record.source_type,
                 "source_name": record.source_name,
+                "detector_type": record.detector_type,
                 "model_name": record.model_name,
                 "model_sha256": record.model_sha256,
             },
@@ -827,6 +835,7 @@ def _analysis_run_from_row(row: sqlite3.Row) -> AnalysisRunRecord:
         id=str(row["id"]),
         source_type=str(row["source_type"]),
         source_name=str(row["source_name"]),
+        detector_type=str(row["detector_type"]),
         camera_id=int(row["camera_id"]) if row["camera_id"] is not None else None,
         model_name=str(row["model_name"]),
         model_sha256=str(row["model_sha256"]),

@@ -8,6 +8,7 @@ from cctv.inference import (
     COCO_CLASS_NAMES,
     BoundingBox,
     CpuYoloDetector,
+    ObjectDetector,
     YoloInferenceError,
     YoloModelLoadError,
     load_class_names,
@@ -83,6 +84,9 @@ def test_cpu_yolo_decodes_v8_output_with_class_aware_nms(
     assert result.frame_width == 640
     assert result.frame_height == 320
     assert detector.summary.processed_frames == 1
+    assert isinstance(detector, ObjectDetector)
+    assert detector.metadata.detector_type == "yolo_onnx"
+    assert detector.summary.detector_type == "yolo_onnx"
     assert detector.summary.total_detections == 2
     assert detector.summary.device == "cpu"
     assert detector.summary.model_name == "model.onnx"

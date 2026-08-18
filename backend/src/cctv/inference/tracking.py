@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from math import isfinite
 
-from cctv.inference.yolo import BoundingBox, Detection, FrameDetections
+from cctv.inference.models import BoundingBox, Detection, FrameDetections
 
 
 @dataclass(frozen=True, slots=True)

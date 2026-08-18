@@ -36,6 +36,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "app_mode": application_settings.app_mode,
                 "ai_device": application_settings.ai_device,
                 "analysis_fps": application_settings.analysis_fps,
+                "detector_enabled": application_settings.object_detection_enabled,
+                "detector_type": application_settings.detector_type,
             },
         )
         try:

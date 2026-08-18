@@ -27,6 +27,7 @@ class AnalysisRunResponse(BaseModel):
     id: str
     source_type: str
     source_name: str
+    detector_type: str
     camera_id: int | None
     model_name: str
     model_sha256: str

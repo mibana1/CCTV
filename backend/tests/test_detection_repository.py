@@ -87,6 +87,7 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
     assert completed.processed_frames == 2
     assert completed.total_detections == 3
     assert completed.error_type is None
+    assert completed.detector_type == "yolo_onnx"
 
     detections = repository.list_detections(analysis_run_id=run.id)
     assert detections.total == 3
