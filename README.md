@@ -59,6 +59,22 @@ Hiperwall 같은 외부 시스템의 실제 변경 작업은 차단합니다. �
 않으면 설정 검증 단계에서 애플리케이션 시작이 실패합니다. CUDA 장치의 실제
 사용 가능 여부는 추론 Worker 구현 단계에서 별도로 검사합니다.
 
+### 규칙 이벤트 → Hiperwall DRY RUN
+
+`CCTV_APP_MODE=dry_run`과 `CCTV_HIPERWALL_DRY_RUN_ENABLED=true`이면 로컬·RTSP
+Worker가 규칙 이벤트를 Hiperwall 작업으로 변환합니다. `started`·`occurred`
+이벤트는 `open_source`, `ended` 이벤트는 `restore_layout`으로 계획되며 실제
+HTTP 요청은 보내지 않습니다. 작업은 규칙 이벤트와 같은 SQLite 트랜잭션에서
+`display_actions`에 `simulated` 상태로 저장됩니다.
+
+```bash
+curl "http://127.0.0.1:8000/hiperwall-actions?status=simulated"
+curl "http://127.0.0.1:8000/hiperwall-actions?analysis_run_id=<RUN_ID>"
+```
+
+응답의 `result.external_request_sent`는 항상 `false`입니다. 현재 구현은 DRY RUN
+전용이며 LIVE 모드에서는 이 계획기를 활성화하지 않습니다.
+
 ## Docker 시작
 
 저장소 루트에서 다음을 실행합니다.

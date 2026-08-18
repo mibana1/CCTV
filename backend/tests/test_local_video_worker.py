@@ -6,7 +6,13 @@ import numpy as np
 import pytest
 
 from cctv.core.settings import get_settings
-from cctv.db import AnalysisRunStatus, DetectionRepository, RuleRepository, initialize_database
+from cctv.db import (
+    AnalysisRunStatus,
+    DetectionRepository,
+    DisplayActionRepository,
+    RuleRepository,
+    initialize_database,
+)
 from cctv.inference import (
     BoundingBox,
     Detection,
@@ -215,12 +221,19 @@ def test_local_video_cli_persists_yolo_results(
         "loaded_count": 1,
         "emitted_event_count": 1,
     }
+    assert output["analysis"]["hiperwall"] == {
+        "dry_run_configured": True,
+        "dry_run_enabled": True,
+        "simulated_action_count": 1,
+        "external_request_sent": False,
+    }
     assert runs.total == 1
     assert runs.items[0].status is AnalysisRunStatus.COMPLETED
     assert runs.items[0].processed_frames == 2
     assert runs.items[0].total_detections == 2
     assert repository.list_detections(analysis_run_id=runs.items[0].id).total == 2
     assert rule_repository.list_events(analysis_run_id=runs.items[0].id).total == 1
+    assert DisplayActionRepository(database_path).list(analysis_run_id=runs.items[0].id).total == 1
 
 
 def test_local_video_cli_uses_interchangeable_detector_interface(

@@ -12,7 +12,7 @@ from threading import Event, Lock
 from time import perf_counter
 
 from cctv.core.logging import configure_logging, shutdown_logging
-from cctv.core.settings import get_settings
+from cctv.core.settings import AppMode, get_settings
 from cctv.db import (
     AnalysisRunRecord,
     AnalysisRunStatus,
@@ -20,6 +20,7 @@ from cctv.db import (
     RuleRepository,
     initialize_database,
 )
+from cctv.hiperwall import HiperwallDryRunPlanner
 from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
 from cctv.media import (
     DecodedFrame,
@@ -345,6 +346,8 @@ def run(argv: Sequence[str] | None = None) -> None:
         detection_repository: DetectionRepository | None = None
         rule_engine: RuleEngine | None = None
         emitted_rule_events = 0
+        hiperwall_planner: HiperwallDryRunPlanner | None = None
+        simulated_hiperwall_actions = 0
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
         if analyze_objects:
@@ -403,6 +406,17 @@ def run(argv: Sequence[str] | None = None) -> None:
                             "supported_rule_types": rule_engine.supported_rule_types,
                         },
                     )
+                    if settings.hiperwall_dry_run_enabled:
+                        if settings.app_mode is AppMode.DRY_RUN:
+                            hiperwall_planner = HiperwallDryRunPlanner(settings)
+                        else:
+                            logger.warning(
+                                "Hiperwall DRY RUN planning is unavailable in LIVE mode",
+                                extra={
+                                    "event": "hiperwall_dry_run_unavailable",
+                                    "app_mode": settings.app_mode,
+                                },
+                            )
             if settings.rules_enabled and rule_engine is None:
                 logger.warning(
                     "Rule engine disabled for this run because tracking or persistence is unavailable",
@@ -414,13 +428,23 @@ def run(argv: Sequence[str] | None = None) -> None:
                 )
 
             def analyze_frame(frame: DecodedFrame) -> None:
-                nonlocal emitted_rule_events
+                nonlocal emitted_rule_events, simulated_hiperwall_actions
 
                 result = detector.analyze(frame)
                 if tracker is not None:
                     result = tracker.update(result)
                 rule_events = rule_engine.process(result) if rule_engine is not None else ()
                 emitted_rule_events += len(rule_events)
+                display_actions = (
+                    hiperwall_planner.plan(
+                        rule_events,
+                        analysis_run_id=analysis_run.id,
+                        source_name=Path(video_path).name,
+                    )
+                    if hiperwall_planner is not None and analysis_run is not None
+                    else ()
+                )
+                simulated_hiperwall_actions += len(display_actions)
                 if detection_repository is not None and analysis_run is not None:
                     detection_repository.save_frame(
                         analysis_run.id,
@@ -429,6 +453,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                             tracker.active_track_ids if tracker is not None else None
                         ),
                         rule_events=rule_events,
+                        display_actions=display_actions,
                     )
 
             frame_consumers.append(analyze_frame)
@@ -522,6 +547,12 @@ def run(argv: Sequence[str] | None = None) -> None:
                 "loaded_count": len(rule_engine.rules) if rule_engine is not None else 0,
                 "emitted_event_count": emitted_rule_events,
             }
+            output["analysis"]["hiperwall"] = {
+                "dry_run_configured": settings.hiperwall_dry_run_enabled,
+                "dry_run_enabled": hiperwall_planner is not None,
+                "simulated_action_count": simulated_hiperwall_actions,
+                "external_request_sent": False,
+            }
             logger.info(
                 "Object detection run complete",
                 extra={
@@ -533,6 +564,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                     "rules_enabled": rule_engine is not None,
                     "loaded_rule_count": len(rule_engine.rules) if rule_engine is not None else 0,
                     "emitted_rule_event_count": emitted_rule_events,
+                    "simulated_hiperwall_action_count": simulated_hiperwall_actions,
                     **asdict(detector.summary),
                 },
             )

@@ -17,6 +17,7 @@ from uuid import uuid4
 from cctv.db.database import connect_database
 
 if TYPE_CHECKING:
+    from cctv.hiperwall import DisplayAction
     from cctv.inference import Detection, FrameDetections
     from cctv.rules import RuleEvent
 
@@ -247,8 +248,10 @@ class DetectionRepository:
         *,
         active_track_ids: Collection[int] | None = None,
         rule_events: Collection[RuleEvent] = (),
+        display_actions: Collection[DisplayAction] = (),
     ) -> int:
-        """Atomically persist one frame, its detections, tracks, and rule events."""
+        """Atomically persist one frame, detections, events, and display actions."""
+        from cctv.db.display_actions import insert_display_actions
         from cctv.db.rules import insert_rule_events
 
         normalized_active_track_ids = _normalize_active_track_ids(active_track_ids)
@@ -328,6 +331,7 @@ class DetectionRepository:
                 analyzed_frame_id=int(frame_id),
                 events=rule_events,
             )
+            insert_display_actions(connection, actions=display_actions)
         persisted_frame_id = int(frame_id)
         logger.debug(
             "Frame detections persisted",
@@ -338,6 +342,7 @@ class DetectionRepository:
                 "sample_index": result.sample_index,
                 "detection_count": len(result.detections),
                 "rule_event_count": len(rule_events),
+                "display_action_count": len(display_actions),
             },
         )
         return persisted_frame_id

@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     tracker_max_idle_seconds: float = Field(default=3.0, gt=0, le=300)
     persist_detections: bool = True
     rules_enabled: bool = True
+    hiperwall_dry_run_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"

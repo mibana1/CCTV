@@ -21,6 +21,11 @@ from cctv.db.detections import (
     TrackPage,
     TrackRecord,
 )
+from cctv.db.display_actions import (
+    DisplayActionPage,
+    DisplayActionRecord,
+    DisplayActionRepository,
+)
 from cctv.db.rules import (
     RuleEventPage,
     RuleEventRecord,
@@ -40,6 +45,9 @@ __all__ = [
     "DetectionPage",
     "DetectionRecord",
     "DetectionRepository",
+    "DisplayActionPage",
+    "DisplayActionRecord",
+    "DisplayActionRepository",
     "RuleEventPage",
     "RuleEventRecord",
     "RulePage",

@@ -32,6 +32,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_TRACKER_MAX_MISSED_FRAMES", "6")
     monkeypatch.setenv("CCTV_TRACKER_MAX_IDLE_SECONDS", "4.5")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
+    monkeypatch.setenv("CCTV_HIPERWALL_DRY_RUN_ENABLED", "false")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
     monkeypatch.setenv("CCTV_LOG_LEVEL", "debug")
@@ -79,6 +80,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.tracker_max_missed_frames == 6
     assert settings.tracker_max_idle_seconds == 4.5
     assert settings.persist_detections is False
+    assert settings.hiperwall_dry_run_enabled is False
     assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
@@ -139,6 +141,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_YOLO_ENABLED",
         "CCTV_TRACKING_ENABLED",
         "CCTV_PERSIST_DETECTIONS",
+        "CCTV_HIPERWALL_DRY_RUN_ENABLED",
         "CCTV_LOCAL_VIDEO_PATH",
     ):
         monkeypatch.delenv(variable, raising=False)
@@ -163,6 +166,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.tracker_max_missed_frames == 4
     assert settings.tracker_max_idle_seconds == 3
     assert settings.persist_detections is True
+    assert settings.hiperwall_dry_run_enabled is True
     assert settings.local_video_path is None
     assert settings.external_actions_enabled is False
 

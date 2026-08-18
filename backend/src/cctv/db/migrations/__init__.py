@@ -11,6 +11,7 @@ from cctv.db.migrations.v0004_track_history import apply as apply_v0004
 from cctv.db.migrations.v0005_track_active_state import apply as apply_v0005
 from cctv.db.migrations.v0006_rule_engine import apply as apply_v0006
 from cctv.db.migrations.v0007_detector_type import apply as apply_v0007
+from cctv.db.migrations.v0008_display_actions import apply as apply_v0008
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ MIGRATIONS = (
     Migration(version=5, name="track_active_state_schema", apply=apply_v0005),
     Migration(version=6, name="rule_engine_schema", apply=apply_v0006),
     Migration(version=7, name="detector_type", apply=apply_v0007),
+    Migration(version=8, name="display_actions", apply=apply_v0008),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

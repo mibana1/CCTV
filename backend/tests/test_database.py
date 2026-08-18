@@ -20,9 +20,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 7
-    assert first.applied_migrations == (1, 2, 3, 4, 5, 6, 7)
-    assert second.schema_version == 7
+    assert first.schema_version == 8
+    assert first.applied_migrations == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert second.schema_version == 8
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -41,7 +41,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
                 WHERE type = 'table'
                     AND name IN (
                         'analysis_runs', 'analyzed_frames', 'detections',
-                        'tracks', 'track_observations', 'rules', 'rule_events'
+                        'tracks', 'track_observations', 'rules', 'rule_events',
+                        'display_actions'
                     )
                 """
             )
@@ -55,6 +56,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 5, "name": "track_active_state_schema"},
             {"version": 6, "name": "rule_engine_schema"},
             {"version": 7, "name": "detector_type"},
+            {"version": 8, "name": "display_actions"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -65,6 +67,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             "track_observations",
             "rules",
             "rule_events",
+            "display_actions",
         }
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -90,7 +93,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 7
+    assert health.schema_version == 8
     assert health.journal_mode == "wal"
 
 
