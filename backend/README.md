@@ -167,10 +167,30 @@ docker compose run --rm backend \
 기본 모델 파일은 각각
 `artifacts/models/face/face_detection_yunet_2026may.onnx`와
 `artifacts/models/face/face_recognition_sface_2021dec.onnx`에 명시적으로 설치해야
-하며 애플리케이션이 실행 중 자동 다운로드하지 않습니다. 현재 등록 파이프라인은
-구현됐지만 RTSP 프레임의 실시간 얼굴 매칭은 아직 연결하지 않았습니다. 임베딩은
-생체정보이므로 실제 운영에서는 API 인증·권한, 전송 암호화, SQLite 파일 암호화
-또는 접근 통제와 보존·삭제 정책을 추가해야 합니다.
+하며 애플리케이션이 실행 중 자동 다운로드하지 않습니다. 고해상도 입력은 긴 변을
+기본 960px로 축소해 검출한 뒤 얼굴 좌표를 원본 프레임 기준으로 복원합니다.
+
+로컬 영상과 RTSP 워커의 `--match-faces`는 프레임 안의 모든 얼굴을 검출하고,
+등록 사진별 코사인 유사도 중 인물별 최고값을 비교합니다. 최고 점수가 기본 0.45
+이상이고 두 번째 인물과의 차이가 기본 0.05 이상일 때만 등록 인물로 판정합니다.
+결과 JSON과 구조화 로그에는 점수·판정·얼굴 좌표를 기록하지만 임베딩 벡터는
+기록하지 않습니다.
+
+```bash
+# 로컬 영상 얼굴 비교
+uv run cctv-local-worker ../video/testvideo1.mp4 \
+  --match-faces --sample-fps 2 --max-samples 30
+
+# MediaMTX 카메라 얼굴 비교
+docker compose --profile rtsp run --rm --build rtsp-worker \
+  --match-faces --sample-fps 2 --max-samples 120
+```
+
+환경변수 `CCTV_FACE_MATCHING_ENABLED=true`로 항상 켤 수도 있고,
+`CCTV_FACE_MATCH_SIMILARITY_THRESHOLD`와 `CCTV_FACE_MATCH_MINIMUM_MARGIN`으로
+판정 기준을 조정할 수 있습니다. 임베딩은 생체정보이므로 실제 운영에서는 API
+인증·권한, 전송 암호화, SQLite 파일 암호화 또는 접근 통제와 보존·삭제 정책을
+추가해야 합니다.
 
 ## 규칙 엔진
 

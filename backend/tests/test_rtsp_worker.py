@@ -8,6 +8,7 @@ import numpy as np
 
 from cctv.core.settings import get_settings
 from cctv.db import AnalysisRunStatus, DetectionRepository
+from cctv.identity import FaceMatchingRunSummary
 from cctv.media import RawRtspFrame, RtspIngestStatistics
 from cctv.workers import RtspStopReason, RtspWorker, WorkerStatus
 from cctv.workers import rtsp as rtsp_worker_module
@@ -129,3 +130,57 @@ def test_rtsp_cli_persists_yolo_results_without_exposing_url(
     assert runs.items[0].status is AnalysisRunStatus.COMPLETED
     assert runs.items[0].processed_frames == 2
     assert repository.list_detections(analysis_run_id=runs.items[0].id).total == 2
+
+
+def test_rtsp_cli_reuses_face_matching_consumer(monkeypatch, tmp_path: Path, capsys) -> None:
+    class FakeFaceMatchingConsumer:
+        def __init__(self) -> None:
+            self.processed_frames = 0
+
+        def __call__(self, frame) -> None:
+            del frame
+            self.processed_frames += 1
+
+        @property
+        def summary(self) -> FaceMatchingRunSummary:
+            return FaceMatchingRunSummary(
+                candidate_identity_count=1,
+                candidate_embedding_count=3,
+                similarity_threshold=0.45,
+                minimum_margin=0.05,
+                processed_frames=self.processed_frames,
+                frames_with_faces=0,
+                detected_faces=0,
+                matched_faces=0,
+                unknown_faces=0,
+                best_similarity=None,
+                matched_identity_counts={},
+            )
+
+    face_consumer = FakeFaceMatchingConsumer()
+    monkeypatch.setattr(
+        rtsp_worker_module,
+        "RtspStreamReader",
+        lambda *args, **kwargs: FakeReader((0, 0.5), source_name=kwargs["source_name"]),
+    )
+    monkeypatch.setattr(
+        rtsp_worker_module,
+        "create_sface_matching_consumer",
+        lambda *args, **kwargs: face_consumer,
+    )
+    monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_FACE_MATCHING_ENABLED", "false")
+    monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "cctv.jsonl"))
+    get_settings.cache_clear()
+
+    try:
+        rtsp_worker_module.run(
+            ["--match-faces", "--sample-fps", "2", "--max-samples", "2"]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    output = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert face_consumer.processed_frames == 2
+    assert output["face_matching"]["candidate_embedding_count"] == 3

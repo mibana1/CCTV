@@ -85,9 +85,13 @@ class Settings(BaseSettings):
     face_embedding_model_path: Path = Path(
         "artifacts/models/face/face_recognition_sface_2021dec.onnx"
     )
-    face_detection_score_threshold: float = Field(default=0.9, gt=0, le=1)
+    face_detection_score_threshold: float = Field(default=0.8, gt=0, le=1)
     face_detection_nms_threshold: float = Field(default=0.3, ge=0, le=1)
     face_detection_top_k: int = Field(default=5_000, ge=1, le=100_000)
+    face_detection_max_input_dimension: int = Field(default=960, ge=320, le=4_096)
+    face_matching_enabled: bool = False
+    face_match_similarity_threshold: float = Field(default=0.45, gt=0, le=1)
+    face_match_minimum_margin: float = Field(default=0.05, ge=0, le=1)
     model_classes_path: Path | None = None
     local_video_path: Path | None = None
     rtsp_input_url: str | None = None

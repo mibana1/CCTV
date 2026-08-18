@@ -54,6 +54,10 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_FACE_DETECTION_SCORE_THRESHOLD", "0.8")
     monkeypatch.setenv("CCTV_FACE_DETECTION_NMS_THRESHOLD", "0.2")
     monkeypatch.setenv("CCTV_FACE_DETECTION_TOP_K", "1000")
+    monkeypatch.setenv("CCTV_FACE_DETECTION_MAX_INPUT_DIMENSION", "1280")
+    monkeypatch.setenv("CCTV_FACE_MATCHING_ENABLED", "true")
+    monkeypatch.setenv("CCTV_FACE_MATCH_SIMILARITY_THRESHOLD", "0.5")
+    monkeypatch.setenv("CCTV_FACE_MATCH_MINIMUM_MARGIN", "0.08")
     monkeypatch.setenv("CCTV_RTSP_INPUT_URL", "rtsp://user:password@camera:554/stream")
     monkeypatch.setenv("CCTV_RTSP_WORKER_URL", "rtsp://mediamtx:8554/camera")
     monkeypatch.setenv("CCTV_RTSP_SOURCE_NAME", "camera-1")
@@ -109,6 +113,10 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.face_detection_score_threshold == 0.8
     assert settings.face_detection_nms_threshold == 0.2
     assert settings.face_detection_top_k == 1_000
+    assert settings.face_detection_max_input_dimension == 1_280
+    assert settings.face_matching_enabled is True
+    assert settings.face_match_similarity_threshold == 0.5
+    assert settings.face_match_minimum_margin == 0.08
     assert settings.rtsp_input_url == "rtsp://user:password@camera:554/stream"
     assert settings.rtsp_worker_url == "rtsp://mediamtx:8554/camera"
     assert settings.rtsp_source_name == "camera-1"
@@ -154,6 +162,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_DETECTOR_CONFIDENCE_THRESHOLD",
         "CCTV_DETECTOR_NMS_THRESHOLD",
         "CCTV_YOLO_ENABLED",
+        "CCTV_FACE_MATCHING_ENABLED",
         "CCTV_TRACKING_ENABLED",
         "CCTV_PERSIST_DETECTIONS",
         "CCTV_HIPERWALL_DRY_RUN_ENABLED",
@@ -176,6 +185,9 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.yolo_input_size == 640
     assert settings.yolo_confidence_threshold == 0.25
     assert settings.yolo_nms_threshold == 0.45
+    assert settings.face_matching_enabled is False
+    assert settings.face_match_similarity_threshold == 0.45
+    assert settings.face_match_minimum_margin == 0.05
     assert settings.tracking_enabled is True
     assert settings.tracker_iou_threshold == 0.3
     assert settings.tracker_max_missed_frames == 4
@@ -212,6 +224,9 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("face_detection_score_threshold", 0),
         ("face_detection_nms_threshold", 1.1),
         ("face_detection_top_k", 0),
+        ("face_detection_max_input_dimension", 319),
+        ("face_match_similarity_threshold", 0),
+        ("face_match_minimum_margin", 1.1),
     ],
 )
 def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:

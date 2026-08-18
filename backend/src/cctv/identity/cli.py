@@ -49,6 +49,7 @@ def run(argv: Sequence[str] | None = None) -> None:
             score_threshold=settings.face_detection_score_threshold,
             nms_threshold=settings.face_detection_nms_threshold,
             top_k=settings.face_detection_top_k,
+            max_input_dimension=settings.face_detection_max_input_dimension,
         )
         result = FaceRegistrationService(
             IdentityRepository(settings.database_path),

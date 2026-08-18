@@ -6,12 +6,24 @@ from cctv.identity.face import (
     SFACE_MODEL_VERSION,
     YUNET_MODEL_NAME,
     YUNET_MODEL_VERSION,
+    DetectedFaceEmbedding,
     ExtractedFaceEmbedding,
+    FaceBounds,
     FaceEmbeddingError,
     FaceEmbeddingModelMetadata,
     FaceModelLoadError,
     FacePhotoError,
     OpenCvSFaceExtractor,
+)
+from cctv.identity.matching import (
+    FaceIdentityMatcher,
+    FaceMatchDecision,
+    FaceMatchingConsumer,
+    FaceMatchingError,
+    FaceMatchingRunSummary,
+    FaceMatchObservation,
+    FrameFaceExtractor,
+    IdentitySimilarity,
 )
 from cctv.identity.registration import (
     MAX_REGISTRATION_PHOTOS,
@@ -24,6 +36,7 @@ from cctv.identity.registration import (
     RegisteredPhotoEmbedding,
     discover_registration_photos,
 )
+from cctv.identity.runtime import create_sface_matching_consumer
 
 __all__ = [
     "MAX_REGISTRATION_PHOTOS",
@@ -34,16 +47,27 @@ __all__ = [
     "SUPPORTED_PHOTO_SUFFIXES",
     "YUNET_MODEL_NAME",
     "YUNET_MODEL_VERSION",
+    "DetectedFaceEmbedding",
     "ExtractedFaceEmbedding",
+    "FaceBounds",
     "FaceEmbeddingError",
     "FaceEmbeddingExtractor",
     "FaceEmbeddingModelMetadata",
+    "FaceIdentityMatcher",
+    "FaceMatchDecision",
+    "FaceMatchObservation",
+    "FaceMatchingConsumer",
+    "FaceMatchingError",
+    "FaceMatchingRunSummary",
     "FaceModelLoadError",
     "FacePhotoError",
     "FaceRegistrationError",
     "FaceRegistrationResult",
     "FaceRegistrationService",
+    "FrameFaceExtractor",
+    "IdentitySimilarity",
     "OpenCvSFaceExtractor",
     "RegisteredPhotoEmbedding",
+    "create_sface_matching_consumer",
     "discover_registration_photos",
 ]

@@ -13,6 +13,7 @@ from cctv.db import (
     RuleRepository,
     initialize_database,
 )
+from cctv.identity import FaceMatchingRunSummary
 from cctv.inference import (
     BoundingBox,
     Detection,
@@ -309,6 +310,69 @@ def test_local_video_cli_uses_interchangeable_detector_interface(
     assert output["analysis"]["detector_type"] == "custom"
     assert output["analysis"]["model_name"] == "custom.model"
     assert output["analysis"]["tracking"]["assigned_detections"] == 1
+
+
+def test_local_video_cli_matches_faces_as_an_independent_consumer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class FakeFaceMatchingConsumer:
+        def __init__(self) -> None:
+            self.processed_frames = 0
+
+        def __call__(self, frame: DecodedFrame) -> None:
+            del frame
+            self.processed_frames += 1
+
+        @property
+        def summary(self) -> FaceMatchingRunSummary:
+            return FaceMatchingRunSummary(
+                candidate_identity_count=1,
+                candidate_embedding_count=3,
+                similarity_threshold=0.5,
+                minimum_margin=0.05,
+                processed_frames=self.processed_frames,
+                frames_with_faces=self.processed_frames,
+                detected_faces=self.processed_frames,
+                matched_faces=self.processed_frames,
+                unknown_faces=0,
+                best_similarity=0.88,
+                matched_identity_counts={"identity-1": self.processed_frames},
+            )
+
+    face_consumer = FakeFaceMatchingConsumer()
+    video_path = create_test_video(tmp_path / "sample.avi")
+    monkeypatch.setattr(
+        "cctv.workers.local_video.create_sface_matching_consumer",
+        lambda *args, **kwargs: face_consumer,
+    )
+    monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_FACE_MATCHING_ENABLED", "false")
+    monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "cctv.jsonl"))
+    get_settings.cache_clear()
+
+    try:
+        run_local_video_worker(
+            [
+                str(video_path),
+                "--match-faces",
+                "--face-match-threshold",
+                "0.5",
+                "--sample-fps",
+                "2",
+                "--max-samples",
+                "2",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    output = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert face_consumer.processed_frames == 2
+    assert output["face_matching"]["detected_faces"] == 2
+    assert output["face_matching"]["matched_identity_counts"] == {"identity-1": 2}
 
 
 @pytest.mark.parametrize("max_samples", [0, -1])

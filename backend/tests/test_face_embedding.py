@@ -74,6 +74,43 @@ def test_sface_extractor_returns_one_valid_128_dimension_feature() -> None:
     assert extractor._detector.input_size == (320, 240)
 
 
+def test_sface_extractor_returns_all_video_frame_faces_with_bounds() -> None:
+    faces = np.concatenate((_face(), _face(0.95)))
+    faces[1, :4] = [-5, 20, 50, 60]
+    extractor = _extractor(faces=faces)
+
+    results = extractor.extract_many(
+        np.zeros((100, 120, 3), dtype=np.uint8),
+        source_name="sample-1",
+    )
+
+    assert len(results) == 2
+    assert results[0].bounds == results[0].bounds.__class__(10, 10, 100, 90)
+    assert results[1].bounds == results[1].bounds.__class__(0, 20, 45, 60)
+    assert results[1].detection_confidence == pytest.approx(0.95)
+
+
+def test_sface_extractor_returns_empty_video_frame_result() -> None:
+    extractor = _extractor(faces=None)
+
+    assert extractor.extract_many(np.zeros((100, 100, 3), dtype=np.uint8)) == ()
+
+
+def test_sface_extractor_resizes_large_input_and_restores_original_bounds() -> None:
+    extractor = _extractor(faces=_face())
+    extractor.max_input_dimension = 320
+
+    result = extractor.extract_many(np.zeros((400, 800, 3), dtype=np.uint8))[0]
+
+    assert extractor._detector.input_size == (320, 160)
+    assert (result.bounds.x, result.bounds.y, result.bounds.width, result.bounds.height) == (
+        25,
+        25,
+        250,
+        250,
+    )
+
+
 @pytest.mark.parametrize(
     ("faces", "expected_count"),
     [

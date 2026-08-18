@@ -25,6 +25,7 @@ from cctv.db import (
     initialize_database,
 )
 from cctv.hiperwall import HiperwallDryRunPlanner
+from cctv.identity import FaceMatchingConsumer, create_sface_matching_consumer
 from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
 from cctv.media import (
     DecodedFrame,
@@ -255,6 +256,13 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-input-size", type=model_input_size)
     parser.add_argument("--confidence-threshold", type=confidence_threshold)
     parser.add_argument("--nms-threshold", type=nms_threshold)
+    parser.add_argument(
+        "--match-faces",
+        action="store_true",
+        help="detect faces and compare them with enabled registered identity embeddings",
+    )
+    parser.add_argument("--face-match-threshold", type=confidence_threshold)
+    parser.add_argument("--face-match-margin", type=nms_threshold)
     return parser
 
 
@@ -281,6 +289,12 @@ def run(argv: Sequence[str] | None = None) -> None:
     )
     if any(option is not None for option in detector_options) and not analyze_objects:
         parser.error("detector options require --analyze or CCTV_DETECTOR_ENABLED=true")
+    match_faces = arguments.match_faces or settings.face_matching_enabled
+    face_match_options = (arguments.face_match_threshold, arguments.face_match_margin)
+    if any(option is not None for option in face_match_options) and not match_faces:
+        parser.error(
+            "face matching options require --match-faces or CCTV_FACE_MATCHING_ENABLED=true"
+        )
     effective_sample_fps = (
         arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
     )
@@ -303,6 +317,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         simulated_hiperwall_actions = 0
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
+        face_matching_consumer: FaceMatchingConsumer | None = None
         if analyze_objects:
             detector = create_detector(
                 DetectorConfig(
@@ -411,6 +426,15 @@ def run(argv: Sequence[str] | None = None) -> None:
 
             consumers.append(analyze_frame)
 
+        if match_faces:
+            face_matching_consumer = create_sface_matching_consumer(
+                settings,
+                source_name=source_name,
+                similarity_threshold=arguments.face_match_threshold,
+                minimum_margin=arguments.face_match_margin,
+            )
+            consumers.append(face_matching_consumer)
+
         snapshot_writer: SnapshotWriter | None = None
         if save_snapshots:
             snapshot_writer = SnapshotWriter(
@@ -513,6 +537,16 @@ def run(argv: Sequence[str] | None = None) -> None:
                 "simulated_action_count": simulated_hiperwall_actions,
                 "external_request_sent": False,
             }
+        if face_matching_consumer is not None:
+            output["face_matching"] = asdict(face_matching_consumer.summary)
+            logger.info(
+                "Face matching run complete",
+                extra={
+                    "event": "face_matching_run_completed",
+                    "source_name": source_name,
+                    **asdict(face_matching_consumer.summary),
+                },
+            )
         print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))
     finally:
         shutdown_logging()
