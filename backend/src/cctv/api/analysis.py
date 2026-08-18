@@ -14,6 +14,8 @@ from cctv.db import (
     AnalysisRunStatus,
     DetectionRecord,
     DetectionRepository,
+    TrackObservationRecord,
+    TrackRecord,
 )
 
 router = APIRouter(tags=["analysis"])
@@ -89,6 +91,56 @@ class DetectionPageResponse(BaseModel):
     items: list[DetectionResponse]
 
 
+class TrackResponse(BaseModel):
+    """One execution-scoped tracked object and its aggregate lifetime."""
+
+    analysis_run_id: str
+    track_id: int
+    class_id: int
+    class_name: str
+    first_sample_index: int
+    last_sample_index: int
+    first_seen_timestamp_seconds: float
+    last_seen_timestamp_seconds: float
+    observation_count: int
+    max_confidence: float
+
+
+class TrackPageResponse(BaseModel):
+    """Bounded page of tracked objects."""
+
+    page: int
+    limit: int
+    total: int
+    has_next: bool
+    items: list[TrackResponse]
+
+
+class TrackObservationResponse(BaseModel):
+    """One chronological detection belonging to a tracked object."""
+
+    id: int
+    analysis_run_id: str
+    track_id: int
+    analyzed_frame_id: int
+    detection_id: int
+    source_index: int
+    sample_index: int
+    source_timestamp_seconds: float
+    confidence: float
+    box: BoundingBoxResponse
+
+
+class TrackObservationPageResponse(BaseModel):
+    """Bounded chronological observation page for one track."""
+
+    page: int
+    limit: int
+    total: int
+    has_next: bool
+    items: list[TrackObservationResponse]
+
+
 PageNumber = Annotated[int, Query(ge=1)]
 PageLimit = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 
@@ -161,6 +213,86 @@ def list_detections(
     )
 
 
+@router.get("/tracks", response_model=TrackPageResponse)
+def list_tracks(
+    request: Request,
+    page: PageNumber = 1,
+    limit: PageLimit = DEFAULT_PAGE_SIZE,
+    analysis_run_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    class_name: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    min_observations: Annotated[int | None, Query(ge=1)] = None,
+) -> TrackPageResponse:
+    """Query tracked objects by execution, class, and lifetime length."""
+    result = _repository(request).list_tracks(
+        page=page,
+        limit=limit,
+        analysis_run_id=analysis_run_id,
+        class_name=class_name,
+        min_observations=min_observations,
+    )
+    return TrackPageResponse(
+        page=page,
+        limit=limit,
+        total=result.total,
+        has_next=page * limit < result.total,
+        items=[_track_response(item) for item in result.items],
+    )
+
+
+@router.get(
+    "/analysis-runs/{analysis_run_id}/tracks/{track_id}",
+    response_model=TrackResponse,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Track not found"}},
+)
+def get_track(request: Request, analysis_run_id: str, track_id: int) -> TrackResponse:
+    """Return one execution-scoped tracked object."""
+    if track_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="track_id must be at least 1",
+        )
+    result = _repository(request).get_track(analysis_run_id, track_id)
+    if result is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="track not found")
+    return _track_response(result)
+
+
+@router.get(
+    "/analysis-runs/{analysis_run_id}/tracks/{track_id}/observations",
+    response_model=TrackObservationPageResponse,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Track not found"}},
+)
+def list_track_observations(
+    request: Request,
+    analysis_run_id: str,
+    track_id: int,
+    page: PageNumber = 1,
+    limit: PageLimit = DEFAULT_PAGE_SIZE,
+) -> TrackObservationPageResponse:
+    """Return one track's detection history in source-frame order."""
+    repository = _repository(request)
+    if track_id < 1:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="track_id must be at least 1",
+        )
+    if repository.get_track(analysis_run_id, track_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="track not found")
+    result = repository.list_track_observations(
+        analysis_run_id=analysis_run_id,
+        track_id=track_id,
+        page=page,
+        limit=limit,
+    )
+    return TrackObservationPageResponse(
+        page=page,
+        limit=limit,
+        total=result.total,
+        has_next=page * limit < result.total,
+        items=[_track_observation_response(item) for item in result.items],
+    )
+
+
 def _repository(request: Request) -> DetectionRepository:
     return DetectionRepository(request.app.state.database.path)
 
@@ -190,4 +322,23 @@ def _detection_response(record: DetectionRecord) -> DetectionResponse:
             x2=record.x2,
             y2=record.y2,
         ),
+    )
+
+
+def _track_response(record: TrackRecord) -> TrackResponse:
+    return TrackResponse(**asdict(record))
+
+
+def _track_observation_response(record: TrackObservationRecord) -> TrackObservationResponse:
+    return TrackObservationResponse(
+        id=record.id,
+        analysis_run_id=record.analysis_run_id,
+        track_id=record.track_id,
+        analyzed_frame_id=record.analyzed_frame_id,
+        detection_id=record.detection_id,
+        source_index=record.source_index,
+        sample_index=record.sample_index,
+        source_timestamp_seconds=record.source_timestamp_seconds,
+        confidence=record.confidence,
+        box=BoundingBoxResponse(x1=record.x1, y1=record.y1, x2=record.x2, y2=record.y2),
     )

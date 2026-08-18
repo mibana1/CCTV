@@ -88,6 +88,19 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
             "/detections",
             params={"analysis_run_id": first_run_id, "track_id": 1},
         )
+        tracks = client.get(
+            "/tracks",
+            params={
+                "analysis_run_id": first_run_id,
+                "class_name": "PERSON",
+                "min_observations": 2,
+            },
+        )
+        track_detail = client.get(f"/analysis-runs/{first_run_id}/tracks/1")
+        observations = client.get(
+            f"/analysis-runs/{first_run_id}/tracks/1/observations",
+            params={"page": 1, "limit": 1},
+        )
 
         assert run_page.status_code == 200
         assert run_page.json()["total"] == 2
@@ -119,9 +132,33 @@ def test_analysis_api_filters_results_and_enforces_pagination(tmp_path: Path) ->
         assert tracked_detections.status_code == 200
         assert tracked_detections.json()["total"] == 2
         assert {item["track_id"] for item in tracked_detections.json()["items"]} == {1}
+        assert tracks.status_code == 200
+        assert tracks.json()["total"] == 1
+        assert tracks.json()["items"][0]["track_id"] == 1
+        assert tracks.json()["items"][0]["observation_count"] == 2
+        assert track_detail.status_code == 200
+        assert track_detail.json()["first_sample_index"] == 0
+        assert track_detail.json()["last_sample_index"] == 1
+        assert track_detail.json()["max_confidence"] == 0.9
+        assert observations.status_code == 200
+        assert observations.json()["total"] == 2
+        assert observations.json()["has_next"] is True
+        assert observations.json()["items"][0]["sample_index"] == 0
+        assert observations.json()["items"][0]["box"] == {
+            "x1": 100,
+            "y1": 200,
+            "x2": 300,
+            "y2": 500,
+        }
 
         assert client.get("/analysis-runs/missing").status_code == 404
         assert client.get("/analysis-runs", params={"limit": 101}).status_code == 422
         assert client.get("/detections", params={"page": 0}).status_code == 422
         assert client.get("/detections", params={"min_confidence": 1.1}).status_code == 422
         assert client.get("/detections", params={"track_id": 1}).status_code == 422
+        assert client.get("/tracks", params={"min_observations": 0}).status_code == 422
+        assert client.get(f"/analysis-runs/{first_run_id}/tracks/0").status_code == 422
+        assert client.get(f"/analysis-runs/{first_run_id}/tracks/999").status_code == 404
+        assert (
+            client.get(f"/analysis-runs/{first_run_id}/tracks/999/observations").status_code == 404
+        )

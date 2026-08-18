@@ -16,6 +16,10 @@ from cctv.db.detections import (
     DetectionPage,
     DetectionRecord,
     DetectionRepository,
+    TrackObservationPage,
+    TrackObservationRecord,
+    TrackPage,
+    TrackRecord,
 )
 
 __all__ = [
@@ -29,6 +33,10 @@ __all__ = [
     "DetectionPage",
     "DetectionRecord",
     "DetectionRepository",
+    "TrackObservationPage",
+    "TrackObservationRecord",
+    "TrackPage",
+    "TrackRecord",
     "check_database_health",
     "connect_database",
     "initialize_database",

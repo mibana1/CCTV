@@ -15,7 +15,7 @@ from uuid import uuid4
 from cctv.db.database import connect_database
 
 if TYPE_CHECKING:
-    from cctv.inference import FrameDetections
+    from cctv.inference import Detection, FrameDetections
 
 DEFAULT_PAGE_SIZE = 50
 MAX_PAGE_SIZE = 100
@@ -79,6 +79,41 @@ class DetectionRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class TrackRecord:
+    """One per-run tracked object with aggregate lifetime information."""
+
+    analysis_run_id: str
+    track_id: int
+    class_id: int
+    class_name: str
+    first_sample_index: int
+    last_sample_index: int
+    first_seen_timestamp_seconds: float
+    last_seen_timestamp_seconds: float
+    observation_count: int
+    max_confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class TrackObservationRecord:
+    """One tracked detection joined with its source-frame metadata."""
+
+    id: int
+    analysis_run_id: str
+    track_id: int
+    analyzed_frame_id: int
+    detection_id: int
+    source_index: int
+    sample_index: int
+    source_timestamp_seconds: float
+    confidence: float
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisRunPage:
     """One bounded page of analysis runs."""
 
@@ -91,6 +126,22 @@ class DetectionPage:
     """One bounded page of detection rows."""
 
     items: tuple[DetectionRecord, ...]
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
+class TrackPage:
+    """One bounded page of per-run object tracks."""
+
+    items: tuple[TrackRecord, ...]
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
+class TrackObservationPage:
+    """One bounded page of observations for a tracked object."""
+
+    items: tuple[TrackObservationRecord, ...]
     total: int
 
 
@@ -211,14 +262,14 @@ class DetectionRepository:
             frame_id = cursor.lastrowid
             if frame_id is None:
                 raise RuntimeError("analyzed frame did not receive an identifier")
-            connection.executemany(
-                """
+            for detection in result.detections:
+                detection_cursor = connection.execute(
+                    """
                     INSERT INTO detections (
                         analyzed_frame_id, track_id, class_id, class_name, confidence,
                         x1, y1, x2, y2
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                (
                     (
                         frame_id,
                         detection.track_id,
@@ -229,10 +280,20 @@ class DetectionRepository:
                         detection.box.y1,
                         detection.box.x2,
                         detection.box.y2,
+                    ),
+                )
+                detection_id = detection_cursor.lastrowid
+                if detection_id is None:
+                    raise RuntimeError("detection did not receive an identifier")
+                if detection.track_id is not None:
+                    _save_track_observation(
+                        connection,
+                        analysis_run_id=analysis_run_id,
+                        analyzed_frame_id=int(frame_id),
+                        detection_id=int(detection_id),
+                        result=result,
+                        detection=detection,
                     )
-                    for detection in result.detections
-                ),
-            )
         persisted_frame_id = int(frame_id)
         logger.debug(
             "Frame detections persisted",
@@ -435,6 +496,196 @@ class DetectionRepository:
             total=total,
         )
 
+    def get_track(self, analysis_run_id: str, track_id: int) -> TrackRecord | None:
+        """Return one tracked object by its execution-scoped identity."""
+        if track_id < 1:
+            raise ValueError("track_id must be at least 1")
+        with closing(connect_database(self.database_path)) as connection:
+            row = connection.execute(
+                """
+                SELECT * FROM tracks
+                WHERE analysis_run_id = ? AND track_id = ?
+                """,
+                (analysis_run_id, track_id),
+            ).fetchone()
+        return _track_from_row(row) if row is not None else None
+
+    def list_tracks(
+        self,
+        *,
+        page: int = 1,
+        limit: int = DEFAULT_PAGE_SIZE,
+        analysis_run_id: str | None = None,
+        class_name: str | None = None,
+        min_observations: int | None = None,
+    ) -> TrackPage:
+        """Query tracked objects by run, class, and minimum lifetime length."""
+        _validate_pagination(page, limit)
+        if min_observations is not None and min_observations < 1:
+            raise ValueError("min_observations must be at least 1")
+
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if analysis_run_id is not None:
+            clauses.append("track.analysis_run_id = ?")
+            parameters.append(analysis_run_id)
+        if class_name is not None:
+            normalized_class_name = class_name.strip()
+            if not normalized_class_name:
+                raise ValueError("class_name must not be empty")
+            clauses.append("track.class_name = ? COLLATE NOCASE")
+            parameters.append(normalized_class_name)
+        if min_observations is not None:
+            clauses.append("track.observation_count >= ?")
+            parameters.append(min_observations)
+
+        where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        join_sql = """
+            FROM tracks AS track
+            JOIN analysis_runs AS run ON run.id = track.analysis_run_id
+        """
+        offset = (page - 1) * limit
+        with closing(connect_database(self.database_path)) as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) {join_sql}{where_sql}",
+                    parameters,
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"""
+                SELECT track.*
+                {join_sql}{where_sql}
+                ORDER BY run.started_at DESC, track.track_id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (*parameters, limit, offset),
+            ).fetchall()
+        return TrackPage(items=tuple(_track_from_row(row) for row in rows), total=total)
+
+    def list_track_observations(
+        self,
+        *,
+        analysis_run_id: str,
+        track_id: int,
+        page: int = 1,
+        limit: int = DEFAULT_PAGE_SIZE,
+    ) -> TrackObservationPage:
+        """Return chronological observations for one execution-scoped track."""
+        _validate_pagination(page, limit)
+        if track_id < 1:
+            raise ValueError("track_id must be at least 1")
+        parameters = (analysis_run_id, track_id)
+        join_sql = """
+            FROM track_observations AS observation
+            JOIN analyzed_frames AS frame ON frame.id = observation.analyzed_frame_id
+            JOIN detections AS detection ON detection.id = observation.detection_id
+            WHERE observation.analysis_run_id = ? AND observation.track_id = ?
+        """
+        offset = (page - 1) * limit
+        with closing(connect_database(self.database_path)) as connection:
+            total = int(
+                connection.execute(
+                    f"SELECT COUNT(*) {join_sql}",
+                    parameters,
+                ).fetchone()[0]
+            )
+            rows = connection.execute(
+                f"""
+                SELECT
+                    observation.id,
+                    observation.analysis_run_id,
+                    observation.track_id,
+                    observation.analyzed_frame_id,
+                    observation.detection_id,
+                    frame.source_index,
+                    frame.sample_index,
+                    frame.source_timestamp_seconds,
+                    detection.confidence,
+                    detection.x1,
+                    detection.y1,
+                    detection.x2,
+                    detection.y2
+                {join_sql}
+                ORDER BY frame.sample_index ASC, observation.id ASC
+                LIMIT ? OFFSET ?
+                """,
+                (*parameters, limit, offset),
+            ).fetchall()
+        return TrackObservationPage(
+            items=tuple(_track_observation_from_row(row) for row in rows),
+            total=total,
+        )
+
+
+def _save_track_observation(
+    connection: sqlite3.Connection,
+    *,
+    analysis_run_id: str,
+    analyzed_frame_id: int,
+    detection_id: int,
+    result: FrameDetections,
+    detection: Detection,
+) -> None:
+    """Upsert one track lifetime and link its detection in the current transaction."""
+    if detection.track_id is None:
+        raise ValueError("tracked detection must include track_id")
+    connection.execute(
+        """
+        INSERT INTO tracks (
+            analysis_run_id, track_id, class_id, class_name,
+            first_sample_index, last_sample_index,
+            first_seen_timestamp_seconds, last_seen_timestamp_seconds,
+            observation_count, max_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT (analysis_run_id, track_id) DO UPDATE SET
+            first_sample_index = MIN(first_sample_index, excluded.first_sample_index),
+            last_sample_index = MAX(last_sample_index, excluded.last_sample_index),
+            first_seen_timestamp_seconds = MIN(
+                first_seen_timestamp_seconds,
+                excluded.first_seen_timestamp_seconds
+            ),
+            last_seen_timestamp_seconds = MAX(
+                last_seen_timestamp_seconds,
+                excluded.last_seen_timestamp_seconds
+            ),
+            observation_count = observation_count + 1,
+            max_confidence = MAX(max_confidence, excluded.max_confidence),
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (
+            analysis_run_id,
+            detection.track_id,
+            detection.class_id,
+            detection.label,
+            result.sample_index,
+            result.sample_index,
+            result.timestamp_seconds,
+            result.timestamp_seconds,
+            detection.confidence,
+        ),
+    )
+    track = connection.execute(
+        """
+        SELECT class_id, class_name
+        FROM tracks
+        WHERE analysis_run_id = ? AND track_id = ?
+        """,
+        (analysis_run_id, detection.track_id),
+    ).fetchone()
+    if track is None:
+        raise RuntimeError("track was not created")
+    if int(track["class_id"]) != detection.class_id or str(track["class_name"]) != detection.label:
+        raise ValueError("one track_id cannot contain detections from different classes")
+    connection.execute(
+        """
+        INSERT INTO track_observations (
+            analysis_run_id, track_id, analyzed_frame_id, detection_id
+        ) VALUES (?, ?, ?, ?)
+        """,
+        (analysis_run_id, detection.track_id, analyzed_frame_id, detection_id),
+    )
+
 
 def _validate_pagination(page: int, limit: int) -> None:
     if page < 1:
@@ -496,6 +747,39 @@ def _detection_from_row(row: sqlite3.Row) -> DetectionRecord:
         track_id=int(row["track_id"]) if row["track_id"] is not None else None,
         class_id=int(row["class_id"]),
         class_name=str(row["class_name"]),
+        confidence=float(row["confidence"]),
+        x1=int(row["x1"]),
+        y1=int(row["y1"]),
+        x2=int(row["x2"]),
+        y2=int(row["y2"]),
+    )
+
+
+def _track_from_row(row: sqlite3.Row) -> TrackRecord:
+    return TrackRecord(
+        analysis_run_id=str(row["analysis_run_id"]),
+        track_id=int(row["track_id"]),
+        class_id=int(row["class_id"]),
+        class_name=str(row["class_name"]),
+        first_sample_index=int(row["first_sample_index"]),
+        last_sample_index=int(row["last_sample_index"]),
+        first_seen_timestamp_seconds=float(row["first_seen_timestamp_seconds"]),
+        last_seen_timestamp_seconds=float(row["last_seen_timestamp_seconds"]),
+        observation_count=int(row["observation_count"]),
+        max_confidence=float(row["max_confidence"]),
+    )
+
+
+def _track_observation_from_row(row: sqlite3.Row) -> TrackObservationRecord:
+    return TrackObservationRecord(
+        id=int(row["id"]),
+        analysis_run_id=str(row["analysis_run_id"]),
+        track_id=int(row["track_id"]),
+        analyzed_frame_id=int(row["analyzed_frame_id"]),
+        detection_id=int(row["detection_id"]),
+        source_index=int(row["source_index"]),
+        sample_index=int(row["sample_index"]),
+        source_timestamp_seconds=float(row["source_timestamp_seconds"]),
         confidence=float(row["confidence"]),
         x1=int(row["x1"]),
         y1=int(row["y1"]),

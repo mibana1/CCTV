@@ -72,7 +72,10 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
             make_detection(2, "car", 0.6),
         ),
     )
-    repository.save_frame(run.id, make_result(1))
+    repository.save_frame(
+        run.id,
+        make_result(1, make_detection(0, "person", 0.95, track_id=1)),
+    )
     completed = repository.finish_analysis_run(
         run.id,
         status=AnalysisRunStatus.COMPLETED,
@@ -82,12 +85,12 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
     assert completed.status is AnalysisRunStatus.COMPLETED
     assert completed.completed_at is not None
     assert completed.processed_frames == 2
-    assert completed.total_detections == 2
+    assert completed.total_detections == 3
     assert completed.error_type is None
 
     detections = repository.list_detections(analysis_run_id=run.id)
-    assert detections.total == 2
-    assert [item.class_name for item in detections.items] == ["person", "car"]
+    assert detections.total == 3
+    assert [item.class_name for item in detections.items] == ["person", "car", "person"]
     assert detections.items[0].frame_width == 640
     assert detections.items[0].frame_height == 360
     assert detections.items[0].track_id == 1
@@ -103,7 +106,27 @@ def test_repository_persists_frames_detections_and_run_counts(tmp_path: Path) ->
             """,
             (run.id,),
         ).fetchall()
-    assert [tuple(frame) for frame in frames] == [(0, 2), (1, 0)]
+    track = repository.get_track(run.id, 1)
+    tracks = repository.list_tracks(
+        analysis_run_id=run.id,
+        class_name="PERSON",
+        min_observations=2,
+    )
+    observations = repository.list_track_observations(
+        analysis_run_id=run.id,
+        track_id=1,
+    )
+
+    assert [tuple(frame) for frame in frames] == [(0, 2), (1, 1)]
+    assert track is not None
+    assert track.first_sample_index == 0
+    assert track.last_sample_index == 1
+    assert track.observation_count == 2
+    assert track.max_confidence == pytest.approx(0.95)
+    assert tracks.total == 1
+    assert observations.total == 2
+    assert [item.sample_index for item in observations.items] == [0, 1]
+    assert observations.items[0].detection_id == detections.items[0].id
 
 
 def test_repository_filters_and_paginates_detections(tmp_path: Path) -> None:
@@ -193,3 +216,32 @@ def test_repository_requires_run_when_filtering_by_track(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="analysis_run_id is required"):
         repository.list_detections(track_id=1)
+
+
+def test_repository_rolls_back_track_class_mismatch(tmp_path: Path) -> None:
+    database_path = tmp_path / "cctv.db"
+    initialize_database(database_path)
+    repository = DetectionRepository(database_path)
+    run = create_run(repository)
+    repository.save_frame(
+        run.id,
+        make_result(0, make_detection(0, "person", 0.9, track_id=1)),
+    )
+
+    with pytest.raises(ValueError, match="different classes"):
+        repository.save_frame(
+            run.id,
+            make_result(1, make_detection(2, "car", 0.8, track_id=1)),
+        )
+
+    with closing(connect_database(database_path)) as connection:
+        counts = {
+            table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            for table in ("analyzed_frames", "detections", "tracks", "track_observations")
+        }
+    assert counts == {
+        "analyzed_frames": 1,
+        "detections": 1,
+        "tracks": 1,
+        "track_observations": 1,
+    }

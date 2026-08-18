@@ -97,5 +97,14 @@ YOLO 분석 시에는 기본으로 클래스별 IoU 객체 추적이 적용되�
 누락 허용 `4`프레임, 유휴 만료 `3`초이며 각각 `.env`에서 조정할 수 있습니다.
 과거 스키마에서 저장된 검출 결과의 `track_id`는 `null`로 유지됩니다.
 
+스키마 v4부터 추적 결과는 `tracks`와 `track_observations`에도 정규화해
+저장합니다. `tracks`에는 최초·최종 관측 시점, 관측 수, 최대 신뢰도가 누적되고,
+`track_observations`는 각 관측을 원본 검출과 프레임에 연결합니다. 기존에
+`detections.track_id`가 저장된 데이터는 마이그레이션 시 자동으로 백필됩니다.
+
+- 트랙 목록: `GET /tracks?analysis_run_id=<run-id>&min_observations=2`
+- 트랙 상세: `GET /analysis-runs/<run-id>/tracks/<track-id>`
+- 관측 이력: `GET /analysis-runs/<run-id>/tracks/<track-id>/observations`
+
 실제 RTSP 또는 Hiperwall 연동 전에
 [`docs/OPEN_QUESTIONS.md`](docs/OPEN_QUESTIONS.md)의 차단 항목을 먼저 확인합니다.
