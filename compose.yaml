@@ -43,3 +43,27 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  local-video-worker:
+    profiles:
+      - local-video
+    build:
+      context: ./backend
+    command:
+      - uv
+      - run
+      - --no-sync
+      - cctv-local-worker
+      - --max-samples
+      - ${LOCAL_VIDEO_MAX_SAMPLES:-10}
+    environment:
+      CCTV_APP_ENV: development
+      CCTV_ANALYSIS_FPS: ${CCTV_ANALYSIS_FPS:-2}
+      CCTV_LOCAL_VIDEO_PATH: /samples/${LOCAL_VIDEO_FILE:-testvideo1.mp4}
+      CCTV_LOG_LEVEL: ${CCTV_LOG_LEVEL:-INFO}
+      CCTV_LOG_PATH: /runtime/logs/cctv.jsonl
+      CCTV_LOG_MAX_BYTES: ${CCTV_LOG_MAX_BYTES:-10485760}
+      CCTV_LOG_BACKUP_COUNT: ${CCTV_LOG_BACKUP_COUNT:-5}
+    volumes:
+      - ${LOCAL_VIDEO_DIR:-../video}:/samples:ro
+      - ./runtime:/runtime

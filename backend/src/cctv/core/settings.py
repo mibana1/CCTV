@@ -57,6 +57,7 @@ class Settings(BaseSettings):
 
     database_path: Path = Path("runtime/cctv.db")
     model_path: Path = Path("artifacts/models/model.onnx")
+    local_video_path: Path | None = None
     rtsp_input_url: str | None = None
     restream_url: str = "rtsp://127.0.0.1:8554/analyzed"
 
@@ -99,6 +100,14 @@ class Settings(BaseSettings):
     def resolve_project_path(cls, value: Path) -> Path:
         """Resolve relative runtime paths from the repository root."""
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
+
+    @field_validator("local_video_path")
+    @classmethod
+    def resolve_optional_project_path(cls, value: Path | None) -> Path | None:
+        """Resolve an optional local video path from the repository root."""
+        if value is None or value.is_absolute():
+            return value
+        return (PROJECT_ROOT / value).resolve()
 
     @model_validator(mode="after")
     def validate_live_mode(self) -> Self:

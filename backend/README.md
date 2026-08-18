@@ -48,3 +48,13 @@ with LocalVideoDecoder("sample.mp4", sample_fps=2) as decoder:
     for frame in decoder.frames():
         analyze(frame.image, frame.timestamp_seconds)
 ```
+
+로컬 디코더는 API와 별도인 단일 실행 워커에서 구동합니다. 입력 경로는 명령행
+인자 또는 `CCTV_LOCAL_VIDEO_PATH`로 지정하고, 개발 중에는 처리할 샘플 수를
+제한할 수 있습니다. 현재 기본 소비자는 프레임을 저장하지 않으며 다음 단계에서
+스냅샷 저장기나 YOLO 추론기로 교체합니다.
+
+```bash
+uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10
+docker compose --profile local-video run --rm --build local-video-worker
+```

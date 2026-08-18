@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 cctv = "cctv.main:run"
+cctv-local-worker = "cctv.workers.local_video:run"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
@@ -35,4 +36,3 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-

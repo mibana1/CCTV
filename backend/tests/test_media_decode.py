@@ -10,6 +10,7 @@ from cctv.media import (
     LocalVideoOpenError,
     iter_local_video_frames,
 )
+from tests.video_factory import create_test_video
 
 
 class FailingCapture:
@@ -42,27 +43,6 @@ class FailingCapture:
 
     def release(self) -> None:
         self.released = True
-
-
-def create_test_video(path: Path, *, fps: float = 4.0, frame_count: int = 12) -> Path:
-    width, height = 32, 24
-    writer = cv2.VideoWriter(
-        str(path),
-        cv2.VideoWriter_fourcc(*"MJPG"),
-        fps,
-        (width, height),
-    )
-    if not writer.isOpened():
-        pytest.fail("OpenCV MJPG test writer could not be opened")
-
-    try:
-        for index in range(frame_count):
-            image = np.full((height, width, 3), index * 10, dtype=np.uint8)
-            writer.write(image)
-    finally:
-        writer.release()
-
-    return path
 
 
 def test_local_video_decoder_reads_metadata_and_samples_by_timestamp(tmp_path: Path) -> None:
