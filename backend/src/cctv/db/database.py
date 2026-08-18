@@ -1,11 +1,14 @@
 """SQLite connection configuration and schema initialization."""
 
+import logging
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
 from cctv.db.migrations import MIGRATIONS
+
+logger = logging.getLogger(__name__)
 
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 
@@ -65,6 +68,14 @@ def initialize_database(database_path: Path) -> DatabaseState:
                 )
                 connection.execute(f"PRAGMA user_version = {migration.version}")
             newly_applied.append(migration.version)
+            logger.info(
+                "Database migration applied",
+                extra={
+                    "event": "database_migration_applied",
+                    "migration_version": migration.version,
+                    "migration_name": migration.name,
+                },
+            )
 
         row = connection.execute(
             "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations"
@@ -72,8 +83,18 @@ def initialize_database(database_path: Path) -> DatabaseState:
         schema_version = int(row["version"])
         connection.execute(f"PRAGMA user_version = {schema_version}")
 
-    return DatabaseState(
+    state = DatabaseState(
         path=path,
         schema_version=schema_version,
         applied_migrations=tuple(newly_applied),
     )
+    logger.info(
+        "Database initialized",
+        extra={
+            "event": "database_initialized",
+            "database_path": path,
+            "schema_version": schema_version,
+            "applied_migrations": newly_applied,
+        },
+    )
+    return state

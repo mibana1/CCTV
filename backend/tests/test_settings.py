@@ -1,16 +1,23 @@
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from cctv.core.settings import Settings
 
 
 def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> None:
     database_path = tmp_path / "runtime" / "test.db"
     model_path = tmp_path / "models" / "test.onnx"
+    log_path = tmp_path / "logs" / "test.jsonl"
 
     monkeypatch.setenv("CCTV_APP_ENV", "test")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
     monkeypatch.setenv("CCTV_LOG_LEVEL", "debug")
+    monkeypatch.setenv("CCTV_LOG_PATH", str(log_path))
+    monkeypatch.setenv("CCTV_LOG_MAX_BYTES", "4096")
+    monkeypatch.setenv("CCTV_LOG_BACKUP_COUNT", "2")
     monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
     monkeypatch.setenv("CCTV_MODEL_PATH", str(model_path))
     monkeypatch.setenv("HIPERWALL_AUTH_MODE", "TOKEN")
@@ -22,6 +29,9 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
     assert settings.log_level == "DEBUG"
+    assert settings.log_path == log_path
+    assert settings.log_max_bytes == 4_096
+    assert settings.log_backup_count == 2
     assert settings.database_path == database_path
     assert settings.model_path == model_path
     assert settings.hiperwall_auth_mode == "token"
@@ -41,3 +51,8 @@ def test_settings_load_explicit_env_file(tmp_path: Path) -> None:
 
     assert settings.app_env == "env-file-test"
     assert settings.database_path == database_path
+
+
+def test_settings_reject_invalid_log_level() -> None:
+    with pytest.raises(ValidationError, match="log level must be"):
+        Settings(_env_file=None, log_level="verbose")

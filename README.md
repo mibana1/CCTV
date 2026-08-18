@@ -42,6 +42,11 @@ API 확인 주소는 `http://127.0.0.1:8000/health`입니다.
 시작할 때 SQLite 파일과 미적용 스키마 마이그레이션을 초기화합니다.
 기본 SQLite 경로는 `runtime/cctv.db`입니다.
 
+Backend 애플리케이션 로그는 stdout과 `runtime/logs/cctv.jsonl`에 JSONL로
+기록됩니다. 기본 회전 기준은 10MiB와 백업 5개이며 `.env`에서 조정할 수
+있습니다. RTSP 사용자정보, 비밀번호, Token, Authorization, Cookie와 인증
+XML 필드는 로그 출력 전에 마스킹됩니다.
+
 ## Docker 시작
 
 저장소 루트에서 다음을 실행합니다.
