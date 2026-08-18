@@ -56,7 +56,23 @@ with LocalVideoDecoder("sample.mp4", sample_fps=2) as decoder:
 저장합니다. 파일명에는 샘플 번호, 원본 프레임 번호와 타임스탬프가 포함되며
 기존 실행 결과를 덮어쓰지 않습니다.
 
+CPU YOLO 분석은 OpenCV DNN으로 ONNX 모델을 로드하며 모델을 자동으로
+다운로드하지 않습니다. `--analyze-yolo` 또는 `CCTV_YOLO_ENABLED=true`로
+명시적으로 활성화하고 `CCTV_MODEL_PATH`에 로컬 모델을 배치합니다. 표준 COCO
+80개 클래스는 내장 이름을 사용하며, 커스텀 모델은 `CCTV_MODEL_CLASSES_PATH`에
+출력 순서와 일치하는 클래스 이름 파일을 지정합니다. YOLOv8/YOLO11의
+`4 + classes` 출력과 YOLOv5의 `5 + classes` 출력을 지원하고 클래스별 NMS 후
+박스를 원본 프레임 좌표로 복원합니다. 프레임별 결과는 DEBUG 구조화 로그에,
+전체 처리량과 평균 추론 시간은 종료 JSON 및 `yolo_run_completed` 로그에
+기록됩니다.
+
 ```bash
 uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10 --save-snapshots
+uv run cctv-local-worker ../video/testvideo1.mp4 --max-samples 10 --analyze-yolo --model-path ../artifacts/models/model.onnx
 docker compose --profile local-video run --rm --build local-video-worker
 ```
+
+Compose에서 CPU 분석을 켜려면 모델 파일을 `artifacts/models/model.onnx`에 두고
+`CCTV_YOLO_ENABLED=true`를 설정합니다. 파일명이 다르면 `YOLO_MODEL_FILE`로
+마운트 디렉터리 안의 파일명만 변경할 수 있습니다. 커스텀 클래스 파일은 컨테이너
+경로(예: `/models/classes.txt`)를 `CCTV_MODEL_CLASSES_PATH`로 지정합니다.

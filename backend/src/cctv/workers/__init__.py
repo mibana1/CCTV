@@ -9,6 +9,7 @@ from cctv.workers.local_video import (
     FrameConsumer,
     LocalVideoWorker,
     LocalVideoWorkerResult,
+    SequentialFrameConsumer,
     WorkerStatus,
     WorkerStopReason,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "FrameConsumer",
     "LocalVideoWorker",
     "LocalVideoWorkerResult",
+    "SequentialFrameConsumer",
     "WorkerStatus",
     "WorkerStopReason",
 ]

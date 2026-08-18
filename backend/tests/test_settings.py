@@ -11,12 +11,17 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     model_path = tmp_path / "models" / "test.onnx"
     local_video_path = tmp_path / "samples" / "test.mp4"
     snapshot_dir = tmp_path / "snapshots"
+    model_classes_path = tmp_path / "models" / "classes.txt"
     log_path = tmp_path / "logs" / "test.jsonl"
 
     monkeypatch.setenv("CCTV_APP_ENV", "test")
     monkeypatch.setenv("CCTV_APP_MODE", "LIVE")
     monkeypatch.setenv("CCTV_AI_DEVICE", "CUDA")
     monkeypatch.setenv("CCTV_ANALYSIS_FPS", "5")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "true")
+    monkeypatch.setenv("CCTV_YOLO_INPUT_SIZE", "320")
+    monkeypatch.setenv("CCTV_YOLO_CONFIDENCE_THRESHOLD", "0.4")
+    monkeypatch.setenv("CCTV_YOLO_NMS_THRESHOLD", "0.5")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
     monkeypatch.setenv("CCTV_LOG_LEVEL", "debug")
@@ -25,6 +30,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_LOG_BACKUP_COUNT", "2")
     monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
     monkeypatch.setenv("CCTV_MODEL_PATH", str(model_path))
+    monkeypatch.setenv("CCTV_MODEL_CLASSES_PATH", str(model_classes_path))
     monkeypatch.setenv("CCTV_LOCAL_VIDEO_PATH", str(local_video_path))
     monkeypatch.setenv("CCTV_SNAPSHOT_DIR", str(snapshot_dir))
     monkeypatch.setenv("CCTV_SNAPSHOT_JPEG_QUALITY", "95")
@@ -38,6 +44,10 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.app_mode is AppMode.LIVE
     assert settings.ai_device is AiDevice.CUDA
     assert settings.analysis_fps == 5
+    assert settings.yolo_enabled is True
+    assert settings.yolo_input_size == 320
+    assert settings.yolo_confidence_threshold == 0.4
+    assert settings.yolo_nms_threshold == 0.5
     assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
     assert settings.port == 9000
@@ -47,6 +57,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.log_backup_count == 2
     assert settings.database_path == database_path
     assert settings.model_path == model_path
+    assert settings.model_classes_path == model_classes_path
     assert settings.local_video_path == local_video_path
     assert settings.snapshot_dir == snapshot_dir
     assert settings.snapshot_jpeg_quality == 95
@@ -79,6 +90,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_APP_MODE",
         "CCTV_AI_DEVICE",
         "CCTV_ANALYSIS_FPS",
+        "CCTV_YOLO_ENABLED",
         "CCTV_LOCAL_VIDEO_PATH",
     ):
         monkeypatch.delenv(variable, raising=False)
@@ -88,6 +100,10 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.app_mode is AppMode.DRY_RUN
     assert settings.ai_device is AiDevice.CPU
     assert settings.analysis_fps == 2
+    assert settings.yolo_enabled is False
+    assert settings.yolo_input_size == 640
+    assert settings.yolo_confidence_threshold == 0.25
+    assert settings.yolo_nms_threshold == 0.45
     assert settings.local_video_path is None
     assert settings.external_actions_enabled is False
 
@@ -99,6 +115,12 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("ai_device", "gpu"),
         ("analysis_fps", 0),
         ("analysis_fps", 31),
+        ("yolo_input_size", 31),
+        ("yolo_input_size", 4097),
+        ("yolo_confidence_threshold", 0),
+        ("yolo_confidence_threshold", 1.1),
+        ("yolo_nms_threshold", -0.1),
+        ("yolo_nms_threshold", 1.1),
         ("snapshot_jpeg_quality", 0),
         ("snapshot_jpeg_quality", 101),
     ],

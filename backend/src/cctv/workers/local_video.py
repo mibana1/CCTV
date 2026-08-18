@@ -12,7 +12,8 @@ from threading import Event, Lock
 from time import perf_counter
 
 from cctv.core.logging import configure_logging, shutdown_logging
-from cctv.core.settings import get_settings
+from cctv.core.settings import AiDevice, get_settings
+from cctv.inference import CpuYoloDetector, load_class_names
 from cctv.media import (
     DecodedFrame,
     LocalVideoDecoder,
@@ -24,6 +25,19 @@ from cctv.media import (
 logger = logging.getLogger(__name__)
 
 FrameConsumer = Callable[[DecodedFrame], None]
+
+
+class SequentialFrameConsumer:
+    """Dispatch each frame to multiple synchronous, bounded consumers."""
+
+    def __init__(self, *consumers: FrameConsumer) -> None:
+        if not consumers:
+            raise ValueError("at least one frame consumer is required")
+        self.consumers = consumers
+
+    def __call__(self, frame: DecodedFrame) -> None:
+        for consumer in self.consumers:
+            consumer(frame)
 
 
 class WorkerStatus(StrEnum):
@@ -237,6 +251,30 @@ def jpeg_quality(value: str) -> int:
     return parsed
 
 
+def confidence_threshold(value: str) -> float:
+    """Parse a confidence threshold in the half-open interval (0, 1]."""
+    parsed = float(value)
+    if not isfinite(parsed) or not 0 < parsed <= 1:
+        raise argparse.ArgumentTypeError("value must be greater than 0 and at most 1")
+    return parsed
+
+
+def nms_threshold(value: str) -> float:
+    """Parse a non-maximum suppression threshold in the interval [0, 1]."""
+    parsed = float(value)
+    if not isfinite(parsed) or not 0 <= parsed <= 1:
+        raise argparse.ArgumentTypeError("value must be between 0 and 1")
+    return parsed
+
+
+def model_input_size(value: str) -> int:
+    """Parse the square ONNX model input size."""
+    parsed = int(value)
+    if not 32 <= parsed <= 4096:
+        raise argparse.ArgumentTypeError("value must be between 32 and 4096")
+    return parsed
+
+
 def build_argument_parser() -> argparse.ArgumentParser:
     """Build the command-line parser for a local video worker run."""
     parser = argparse.ArgumentParser(description="Decode and sample one local video file")
@@ -246,11 +284,17 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--save-snapshots", action="store_true")
     parser.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--jpeg-quality", type=jpeg_quality)
+    parser.add_argument("--analyze-yolo", action="store_true")
+    parser.add_argument("--model-path", type=Path)
+    parser.add_argument("--class-names-path", type=Path)
+    parser.add_argument("--model-input-size", type=model_input_size)
+    parser.add_argument("--confidence-threshold", type=confidence_threshold)
+    parser.add_argument("--nms-threshold", type=nms_threshold)
     return parser
 
 
 def run(argv: Sequence[str] | None = None) -> None:
-    """Run a decode-only local video worker from the command line."""
+    """Run a local video worker with optional snapshots and CPU YOLO analysis."""
     settings = get_settings()
     parser = build_argument_parser()
     arguments = parser.parse_args(argv)
@@ -260,6 +304,18 @@ def run(argv: Sequence[str] | None = None) -> None:
     save_snapshots = arguments.save_snapshots or arguments.snapshot_dir is not None
     if arguments.jpeg_quality is not None and not save_snapshots:
         parser.error("--jpeg-quality requires --save-snapshots or --snapshot-dir")
+    analyze_yolo = arguments.analyze_yolo or arguments.model_path is not None
+    analyze_yolo = analyze_yolo or settings.yolo_enabled
+    yolo_options = (
+        arguments.class_names_path,
+        arguments.model_input_size,
+        arguments.confidence_threshold,
+        arguments.nms_threshold,
+    )
+    if any(option is not None for option in yolo_options) and not analyze_yolo:
+        parser.error("YOLO tuning options require --analyze-yolo or CCTV_YOLO_ENABLED=true")
+    if analyze_yolo and settings.ai_device is not AiDevice.CPU:
+        parser.error("CPU YOLO analysis requires CCTV_AI_DEVICE=cpu")
 
     configure_logging(
         level=settings.log_level,
@@ -268,6 +324,28 @@ def run(argv: Sequence[str] | None = None) -> None:
         backup_count=settings.log_backup_count,
     )
     try:
+        frame_consumers: list[FrameConsumer] = []
+        yolo_detector: CpuYoloDetector | None = None
+        if analyze_yolo:
+            yolo_detector = CpuYoloDetector(
+                arguments.model_path or settings.model_path,
+                class_names=load_class_names(
+                    arguments.class_names_path or settings.model_classes_path
+                ),
+                input_size=arguments.model_input_size or settings.yolo_input_size,
+                confidence_threshold=(
+                    arguments.confidence_threshold
+                    if arguments.confidence_threshold is not None
+                    else settings.yolo_confidence_threshold
+                ),
+                nms_threshold=(
+                    arguments.nms_threshold
+                    if arguments.nms_threshold is not None
+                    else settings.yolo_nms_threshold
+                ),
+            )
+            frame_consumers.append(yolo_detector)
+
         snapshot_writer: SnapshotWriter | None = None
         if save_snapshots:
             snapshot_root = arguments.snapshot_dir or settings.snapshot_dir
@@ -279,12 +357,20 @@ def run(argv: Sequence[str] | None = None) -> None:
                     else settings.snapshot_jpeg_quality
                 ),
             )
+            frame_consumers.append(snapshot_writer)
+
+        frame_consumer: FrameConsumer | None = None
+        if len(frame_consumers) == 1:
+            frame_consumer = frame_consumers[0]
+        elif frame_consumers:
+            frame_consumer = SequentialFrameConsumer(*frame_consumers)
+
         result = LocalVideoWorker(
             video_path,
             sample_fps=(
                 arguments.sample_fps if arguments.sample_fps is not None else settings.analysis_fps
             ),
-            frame_consumer=snapshot_writer,
+            frame_consumer=frame_consumer,
             max_samples=arguments.max_samples,
         ).execute()
         output = asdict(result)
@@ -305,6 +391,15 @@ def run(argv: Sequence[str] | None = None) -> None:
                     "first_snapshot_path": snapshot_writer.first_path,
                     "last_snapshot_path": snapshot_writer.last_path,
                     "jpeg_quality": snapshot_writer.jpeg_quality,
+                },
+            )
+        if yolo_detector is not None:
+            output["analysis"] = asdict(yolo_detector.summary)
+            logger.info(
+                "CPU YOLO analysis run complete",
+                extra={
+                    "event": "yolo_run_completed",
+                    **asdict(yolo_detector.summary),
                 },
             )
         print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))

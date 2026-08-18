@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     app_mode: AppMode = AppMode.DRY_RUN
     ai_device: AiDevice = AiDevice.CPU
     analysis_fps: float = Field(default=2.0, gt=0, le=30)
+    yolo_enabled: bool = False
+    yolo_input_size: int = Field(default=640, ge=32, le=4096)
+    yolo_confidence_threshold: float = Field(default=0.25, gt=0, le=1)
+    yolo_nms_threshold: float = Field(default=0.45, ge=0, le=1)
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"
@@ -59,6 +63,7 @@ class Settings(BaseSettings):
 
     database_path: Path = Path("runtime/cctv.db")
     model_path: Path = Path("artifacts/models/model.onnx")
+    model_classes_path: Path | None = None
     local_video_path: Path | None = None
     rtsp_input_url: str | None = None
     restream_url: str = "rtsp://127.0.0.1:8554/analyzed"
@@ -103,10 +108,16 @@ class Settings(BaseSettings):
         """Resolve relative runtime paths from the repository root."""
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
 
-    @field_validator("local_video_path")
+    @field_validator("local_video_path", "model_classes_path", mode="before")
+    @classmethod
+    def normalize_optional_path(cls, value: object) -> object:
+        """Treat empty optional path environment variables as unset."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("local_video_path", "model_classes_path")
     @classmethod
     def resolve_optional_project_path(cls, value: Path | None) -> Path | None:
-        """Resolve an optional local video path from the repository root."""
+        """Resolve optional project-owned file paths from the repository root."""
         if value is None or value.is_absolute():
             return value
         return (PROJECT_ROOT / value).resolve()

@@ -4,7 +4,12 @@ import cv2
 import pytest
 
 from cctv.media import DecodedFrame, SnapshotWriter
-from cctv.workers import LocalVideoWorker, WorkerStatus, WorkerStopReason
+from cctv.workers import (
+    LocalVideoWorker,
+    SequentialFrameConsumer,
+    WorkerStatus,
+    WorkerStopReason,
+)
 from tests.video_factory import create_test_video
 
 
@@ -65,6 +70,24 @@ def test_local_video_worker_saves_samples_through_snapshot_consumer(tmp_path: Pa
         "sample_000001_frame_000000002_t000000000500ms.jpg",
     ]
     assert all(cv2.imread(str(path)) is not None for path in snapshots)
+
+
+def test_sequential_frame_consumer_dispatches_in_order() -> None:
+    calls: list[tuple[str, int]] = []
+    frame = DecodedFrame(
+        source_index=3,
+        sample_index=1,
+        timestamp_seconds=0.5,
+        image=cv2.UMat(2, 2, cv2.CV_8UC3).get(),
+    )
+    consumer = SequentialFrameConsumer(
+        lambda value: calls.append(("analysis", value.source_index)),
+        lambda value: calls.append(("snapshot", value.source_index)),
+    )
+
+    consumer(frame)
+
+    assert calls == [("analysis", 3), ("snapshot", 3)]
 
 
 def test_local_video_worker_honors_consumer_stop_request(tmp_path: Path) -> None:
