@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     face_match_similarity_threshold: float = Field(default=0.45, gt=0, le=1)
     face_match_minimum_margin: float = Field(default=0.05, ge=0, le=1)
     face_match_unknown_retry_seconds: float = Field(default=2.0, gt=0, le=300)
+    face_identity_stitch_max_gap_seconds: float = Field(default=5.0, gt=0, le=300)
+    face_identity_stitch_min_similarity: float = Field(default=0.35, ge=-1, le=1)
+    face_identity_stitch_max_distance_ratio: float = Field(default=6.0, gt=0, le=100)
     test_dashboard_enabled: bool = False
     media_hls_base_url: str = "http://127.0.0.1:18888"
     mediamtx_dynamic_paths_enabled: bool = False

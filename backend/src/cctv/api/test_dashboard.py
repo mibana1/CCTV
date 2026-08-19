@@ -101,6 +101,7 @@ class FaceMatchEventResponse(BaseModel):
     source_timestamp_seconds: float
     face_index: int
     track_id: int | None
+    person_instance_id: str | None
     face_bounds: FaceBoundsResponse
     detection_confidence: float
     match_status: Literal["matched", "unknown"]

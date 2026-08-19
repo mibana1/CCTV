@@ -15,6 +15,8 @@ historical detection rows. Version 4 adds aggregate `tracks` and normalized
 Version 5 adds the tracker-owned active state and a class/time/state query index.
 Version 11 adds a unique MediaMTX stream path to camera registrations for local
 browser previews. Version 12 adds an encrypted RTSP source column, a redacted
-endpoint, on-demand behavior, and MediaMTX provisioning state. Add later domain
+endpoint, on-demand behavior, and MediaMTX provisioning state. Version 13 adds
+session-scoped `person_instances`, their `track_identity_links`, and the optional
+face-event association used to stitch fragmented tracker IDs. Add later domain
 tables as new versioned migration modules; never edit a migration that has been
 deployed.

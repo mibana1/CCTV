@@ -21,9 +21,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 12
-    assert first.applied_migrations == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
-    assert second.schema_version == 12
+    assert first.schema_version == 13
+    assert first.applied_migrations == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
+    assert second.schema_version == 13
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -44,7 +44,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
                         'analysis_runs', 'analyzed_frames', 'detections',
                         'tracks', 'track_observations', 'rules', 'rule_events',
                         'display_actions', 'identities', 'identity_embeddings',
-                        'face_match_events'
+                        'face_match_events', 'person_instances', 'track_identity_links'
                     )
                 """
             )
@@ -63,6 +63,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 10, "name": "face_match_events"},
             {"version": 11, "name": "camera_stream_paths"},
             {"version": 12, "name": "camera_rtsp_sources"},
+            {"version": 13, "name": "person_instances"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -77,6 +78,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             "identities",
             "identity_embeddings",
             "face_match_events",
+            "person_instances",
+            "track_identity_links",
         }
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -96,7 +99,7 @@ def test_connect_database_returns_rows_by_column_name(tmp_path: Path) -> None:
     assert dict(row) == {"id": 1, "name": "Test camera", "enabled": 1}
 
 
-def test_initialize_database_upgrades_schema_version_eleven_to_camera_rtsp_sources(
+def test_initialize_database_upgrades_schema_version_twelve_to_person_instances(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "existing.db"
@@ -119,12 +122,12 @@ def test_initialize_database_upgrades_schema_version_eleven_to_camera_rtsp_sourc
         connection.execute(
             "INSERT INTO cameras (name, stream_path) VALUES ('Existing camera', 'camera')"
         )
-        connection.execute("PRAGMA user_version = 11")
+        connection.execute("PRAGMA user_version = 12")
 
     state = initialize_database(database_path)
 
-    assert state.schema_version == 12
-    assert state.applied_migrations == (12,)
+    assert state.schema_version == 13
+    assert state.applied_migrations == (13,)
     with closing(connect_database(database_path)) as connection:
         camera = connection.execute(
             """
@@ -139,7 +142,10 @@ def test_initialize_database_upgrades_schema_version_eleven_to_camera_rtsp_sourc
                 """
                 SELECT name FROM sqlite_master
                 WHERE type = 'table'
-                    AND name IN ('identities', 'identity_embeddings', 'face_match_events')
+                    AND name IN (
+                        'identities', 'identity_embeddings', 'face_match_events',
+                        'person_instances', 'track_identity_links'
+                    )
                 """
             )
         }
@@ -152,7 +158,13 @@ def test_initialize_database_upgrades_schema_version_eleven_to_camera_rtsp_sourc
         "source_on_demand": 1,
         "provisioning_status": "external",
     }
-    assert tables == {"identities", "identity_embeddings", "face_match_events"}
+    assert tables == {
+        "identities",
+        "identity_embeddings",
+        "face_match_events",
+        "person_instances",
+        "track_identity_links",
+    }
     assert foreign_key_errors == []
 
 
@@ -162,7 +174,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 12
+    assert health.schema_version == 13
     assert health.journal_mode == "wal"
 
 

@@ -21,15 +21,13 @@ from cctv.db import (
     AnalysisRunRecord,
     AnalysisRunStatus,
     DetectionRepository,
-    FaceMatchEventInput,
-    FaceMatchRepository,
     RuleRepository,
     initialize_database,
 )
 from cctv.hiperwall import HiperwallDryRunPlanner
 from cctv.identity import (
     FaceMatchingConsumer,
-    FaceMatchObservation,
+    create_resolving_face_observation_sink,
     create_sface_matching_consumer,
 )
 from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
@@ -340,7 +338,6 @@ def run(argv: Sequence[str] | None = None) -> None:
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
         face_matching_consumer: FaceMatchingConsumer | None = None
-        face_match_repository: FaceMatchRepository | None = None
         if analyze_objects:
             detector = create_detector(
                 DetectorConfig(
@@ -456,53 +453,21 @@ def run(argv: Sequence[str] | None = None) -> None:
             consumers.append(analyze_frame)
 
         if match_faces:
-            if analysis_run is not None:
-                face_match_repository = FaceMatchRepository(settings.database_path)
-
-            def persist_face_observation(
-                observation: FaceMatchObservation,
-                track_id: int | None,
-            ) -> None:
-                if face_match_repository is None or analysis_run is None:
-                    return
-                decision = observation.decision
-                face_match_repository.save_event(
-                    analysis_run.id,
-                    FaceMatchEventInput(
-                        source_index=observation.source_index,
-                        sample_index=observation.sample_index,
-                        source_timestamp_seconds=observation.timestamp_seconds,
-                        face_index=observation.face_index,
-                        track_id=track_id,
-                        face_x=observation.face.bounds.x,
-                        face_y=observation.face.bounds.y,
-                        face_width=observation.face.bounds.width,
-                        face_height=observation.face.bounds.height,
-                        detection_confidence=observation.face.detection_confidence,
-                        match_status=decision.status.value,
-                        rejection_reason=(
-                            decision.rejection_reason.value
-                            if decision.rejection_reason is not None
-                            else None
-                        ),
-                        identity_id=decision.identity_id,
-                        external_id=decision.external_id,
-                        display_name=decision.display_name,
-                        best_candidate_identity_id=decision.best_candidate.identity_id,
-                        best_candidate_external_id=decision.best_candidate.external_id,
-                        best_similarity=decision.best_candidate.similarity,
-                        second_best_similarity=decision.second_best_similarity,
-                        similarity_threshold=decision.similarity_threshold,
-                        minimum_margin=decision.minimum_margin,
-                    ),
+            observation_sink = (
+                create_resolving_face_observation_sink(
+                    settings,
+                    analysis_run_id=analysis_run.id,
                 )
+                if analysis_run is not None
+                else None
+            )
 
             face_matching_consumer = create_sface_matching_consumer(
                 settings,
                 source_name=source_name,
                 similarity_threshold=arguments.face_match_threshold,
                 minimum_margin=arguments.face_match_margin,
-                observation_sink=persist_face_observation,
+                observation_sink=observation_sink,
             )
             if tracker is None:
                 consumers.append(face_matching_consumer)

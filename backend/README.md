@@ -191,17 +191,33 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 
 환경변수 `CCTV_FACE_MATCHING_ENABLED=true`로 항상 켤 수도 있고,
 `CCTV_FACE_MATCH_SIMILARITY_THRESHOLD`와 `CCTV_FACE_MATCH_MINIMUM_MARGIN`으로
-판정 기준을 조정할 수 있습니다.
+판정 기준을 조정할 수 있습니다. 끊어진 트랙 연결은 후보 유사도 0.35 이상이면
+기본 5초·얼굴 중심 이동 거리 비율 6 이내에서 허용합니다. 그보다 낮은 점수는
+얼굴 판정을 matched로 바꾸지 않고, 2초·거리 비율 4 이내의 강한 이동 연속성이
+확인될 때만 unknown 인스턴스 연결에 사용합니다. 각각
+`CCTV_FACE_IDENTITY_STITCH_MAX_GAP_SECONDS`,
+`CCTV_FACE_IDENTITY_STITCH_MIN_SIMILARITY`,
+`CCTV_FACE_IDENTITY_STITCH_MAX_DISTANCE_RATIO`로 조정할 수 있습니다.
 
 신규 얼굴 비교 결과는 객체 분석 실행과 연결해 `face_match_events`에 저장됩니다.
 임베딩 벡터나 RTSP 주소는 저장하지 않으며 얼굴 위치, 판정, 후보 점수와
-`track_id`만 보존합니다. 로컬 테스트 대시보드에서는 다음 API로 실행별 결과를
-조회합니다.
+`track_id`만 보존합니다. 추적이 활성화된 실행에서는 `TrackIdentityResolver`가
+동일 등록 인물로 판정된 트랙과 시간·위치·후보 점수가 연속적인 unknown 트랙을
+`person_instances`와 `track_identity_links`로 묶습니다. 원본 판정 이벤트는
+그대로 보존하고 인물별 최종 상태는 별도로 집계합니다. 로컬 테스트 대시보드에서는
+다음 API로 실행별 결과를 조회합니다.
 
 ```text
 GET /face-match-events?analysis_run_id={analysis_run_id}&match_status=matched
 GET /analysis-runs/{analysis_run_id}/face-match-summary
+GET /person-instances?analysis_run_id={analysis_run_id}&status=matched
+GET /analysis-runs/{analysis_run_id}/person-instance-summary
+GET /analysis-runs/{analysis_run_id}/person-instances/{person_instance_id}/tracks
 ```
+
+스키마 v13 이전의 얼굴 이벤트는 원본 기록을 보존하기 위해 자동 추론·병합하지
+않으며 `person_instance_id=null`로 유지됩니다. 새 분석 실행부터 resolver가
+실시간으로 연결합니다.
 
 ## 로컬 RTSP 테스트 대시보드
 
@@ -230,7 +246,9 @@ MediaMTX Control API는 `127.0.0.1:9997`에만 바인딩합니다. 내부 전용
 `CCTV_FACE_MATCH_UNKNOWN_RETRY_SECONDS`로 간격을 조정할 수 있습니다. 실행 요약의
 `face_analysis_attempts`, `cache_hits`, `cached_tracks`에서 캐시 효과를 확인할 수
 있습니다. 객체 추적 없이 `--match-faces`만 실행하면 `track_id`가 없으므로 기존처럼
-샘플 프레임 전체를 분석합니다.
+샘플 프레임 전체를 분석하며 person instance 연결도 수행하지 않습니다. 대시보드의
+`인식된 인물`과 `최종 Unknown`은 누적 얼굴 판정 횟수가 아니라 person instance의
+최종 상태를 표시합니다.
 
 임베딩은 생체정보이므로 실제 운영에서는 API 인증·권한, 전송 암호화, SQLite 파일
 암호화 또는 접근 통제와 보존·삭제 정책을 추가해야 합니다.

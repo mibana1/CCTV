@@ -55,6 +55,14 @@ from cctv.db.identities import (
     IdentityRepository,
     normalize_embedding,
 )
+from cctv.db.person_instances import (
+    PersonInstancePage,
+    PersonInstanceRecord,
+    PersonInstanceRepository,
+    PersonInstanceRunSummary,
+    TrackIdentityLinkPage,
+    TrackIdentityLinkRecord,
+)
 from cctv.db.rules import (
     RuleEventPage,
     RuleEventRecord,
@@ -98,11 +106,17 @@ __all__ = [
     "IdentityPage",
     "IdentityRecord",
     "IdentityRepository",
+    "PersonInstancePage",
+    "PersonInstanceRecord",
+    "PersonInstanceRepository",
+    "PersonInstanceRunSummary",
     "RuleEventPage",
     "RuleEventRecord",
     "RulePage",
     "RuleRecord",
     "RuleRepository",
+    "TrackIdentityLinkPage",
+    "TrackIdentityLinkRecord",
     "TrackObservationPage",
     "TrackObservationRecord",
     "TrackPage",

@@ -50,6 +50,7 @@ class FaceMatchEventRecord:
     source_timestamp_seconds: float
     face_index: int
     track_id: int | None
+    person_instance_id: str | None
     face_x: int
     face_y: int
     face_width: int
@@ -219,6 +220,11 @@ def _event_from_row(row: sqlite3.Row) -> FaceMatchEventRecord:
         source_timestamp_seconds=float(row["source_timestamp_seconds"]),
         face_index=int(row["face_index"]),
         track_id=int(row["track_id"]) if row["track_id"] is not None else None,
+        person_instance_id=(
+            str(row["person_instance_id"])
+            if row["person_instance_id"] is not None
+            else None
+        ),
         face_x=int(row["face_x"]),
         face_y=int(row["face_y"]),
         face_width=int(row["face_width"]),
@@ -263,4 +269,3 @@ __all__ = [
     "FaceMatchRepository",
     "FaceMatchRunSummary",
 ]
-

@@ -27,6 +27,7 @@ from cctv.identity.matching import (
     FrameFaceExtractor,
     IdentitySimilarity,
 )
+from cctv.identity.persistence import create_resolving_face_observation_sink
 from cctv.identity.registration import (
     MAX_REGISTRATION_PHOTOS,
     MIN_REGISTRATION_PHOTOS,
@@ -38,6 +39,7 @@ from cctv.identity.registration import (
     RegisteredPhotoEmbedding,
     discover_registration_photos,
 )
+from cctv.identity.resolution import TrackIdentityResolver
 from cctv.identity.runtime import create_sface_matching_consumer
 
 __all__ = [
@@ -72,6 +74,8 @@ __all__ = [
     "IdentitySimilarity",
     "OpenCvSFaceExtractor",
     "RegisteredPhotoEmbedding",
+    "TrackIdentityResolver",
+    "create_resolving_face_observation_sink",
     "create_sface_matching_consumer",
     "discover_registration_photos",
 ]

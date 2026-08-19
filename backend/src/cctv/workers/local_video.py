@@ -21,7 +21,11 @@ from cctv.db import (
     initialize_database,
 )
 from cctv.hiperwall import HiperwallDryRunPlanner
-from cctv.identity import FaceMatchingConsumer, create_sface_matching_consumer
+from cctv.identity import (
+    FaceMatchingConsumer,
+    create_resolving_face_observation_sink,
+    create_sface_matching_consumer,
+)
 from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
 from cctv.media import (
     DecodedFrame,
@@ -480,11 +484,20 @@ def run(argv: Sequence[str] | None = None) -> None:
             frame_consumers.append(analyze_frame)
 
         if match_faces:
+            observation_sink = (
+                create_resolving_face_observation_sink(
+                    settings,
+                    analysis_run_id=analysis_run.id,
+                )
+                if analysis_run is not None
+                else None
+            )
             face_matching_consumer = create_sface_matching_consumer(
                 settings,
                 source_name=Path(video_path).name,
                 similarity_threshold=arguments.face_match_threshold,
                 minimum_margin=arguments.face_match_margin,
+                observation_sink=observation_sink,
             )
             if tracker is None:
                 frame_consumers.append(face_matching_consumer)

@@ -12,6 +12,7 @@ from cctv import __version__
 from cctv.api.analysis import router as analysis_router
 from cctv.api.hiperwall import router as hiperwall_router
 from cctv.api.identities import router as identities_router
+from cctv.api.person_instances import router as person_instances_router
 from cctv.api.rules import router as rules_router
 from cctv.api.test_dashboard import router as test_dashboard_router
 from cctv.db import check_database_health
@@ -22,6 +23,7 @@ router = APIRouter()
 router.include_router(analysis_router)
 router.include_router(hiperwall_router)
 router.include_router(identities_router)
+router.include_router(person_instances_router)
 router.include_router(rules_router)
 router.include_router(test_dashboard_router)
 

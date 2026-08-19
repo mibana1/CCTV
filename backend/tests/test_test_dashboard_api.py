@@ -207,6 +207,8 @@ def test_dashboard_page_stabilizes_result_refreshes(tmp_path: Path) -> None:
     assert "if (state.refreshInFlight) return state.refreshInFlight;" in page.text
     assert "stopRefreshTimer();" in page.text
     assert 'document.getElementById("gallery").replaceChildren(fragment);' in page.text
+    assert "person-instance-summary" in page.text
+    assert "item.person_instance_id" in page.text
     assert (
         'document.getElementById("face-results").replaceChildren(...replacement.children);'
         in page.text

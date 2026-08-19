@@ -137,6 +137,9 @@ GET  /test-sessions/{session_id}/events
 GET  /test-sessions/{session_id}/snapshots
 GET  /face-match-events?analysis_run_id={analysis_run_id}
 GET  /analysis-runs/{analysis_run_id}/face-match-summary
+GET  /person-instances?analysis_run_id={analysis_run_id}
+GET  /analysis-runs/{analysis_run_id}/person-instance-summary
+GET  /analysis-runs/{analysis_run_id}/person-instances/{person_instance_id}/tracks
 POST /test-cameras
 GET  /test-cameras
 PATCH /test-cameras/{camera_id}
@@ -158,6 +161,13 @@ GET  /test-cameras/{camera_id}/status
 끄려면 `CCTV_TRACKING_ENABLED=false`를 사용합니다. 기본값은 IoU 임계값 `0.3`,
 누락 허용 `4`프레임, 유휴 만료 `3`초이며 각각 `.env`에서 조정할 수 있습니다.
 과거 스키마에서 저장된 검출 결과의 `track_id`는 `null`로 유지됩니다.
+
+스키마 v13부터 `TrackIdentityResolver`가 `YOLO track_id → 얼굴 인식 → 세션 내
+person_instance_id` 순서로 끊어진 트랙을 묶습니다. 동일 `identity_id`로 인식된
+트랙은 같은 인물로 연결하고, unknown 트랙은 후보 유사도와 시간·얼굴 위치가 모두
+연속적인 경우에만 이후 matched 트랙과 연결합니다. 원본 얼굴 판정 횟수와 별도로
+person instance의 최종 `matched|unknown` 상태를 집계하므로, 연결된 인물이 나중에
+정상 인식되면 세션의 최종 Unknown 인물 수에서는 제외됩니다.
 
 스키마 v4부터 추적 결과는 `tracks`와 `track_observations`에도 정규화해
 저장합니다. `tracks`에는 최초·최종 관측 시점, 관측 수, 최대 신뢰도가 누적되고,

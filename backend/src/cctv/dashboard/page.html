@@ -216,9 +216,9 @@
               <div class="metric"><span>현재 메모리</span><strong id="memory">—</strong></div>
               <div class="metric"><span>RTSP 연결</span><strong id="connections">—</strong></div>
               <div class="metric"><span>재연결</span><strong id="reconnects">—</strong></div>
-              <div class="metric"><span>얼굴 검출</span><strong id="faces">—</strong></div>
-              <div class="metric"><span>정상 인식</span><strong id="matches">—</strong></div>
-              <div class="metric"><span>Unknown</span><strong id="unknowns">—</strong></div>
+              <div class="metric"><span>얼굴 판정</span><strong id="faces">—</strong></div>
+              <div class="metric"><span>인식된 인물</span><strong id="matches">—</strong></div>
+              <div class="metric"><span>최종 Unknown</span><strong id="unknowns">—</strong></div>
               <div class="metric"><span>캐시 적중</span><strong id="cache-hits">—</strong></div>
             </div>
             <p id="last-message" class="message">테스트를 시작할 준비가 됐습니다.</p>
@@ -228,8 +228,8 @@
             <h2>얼굴 인식 결과</h2>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>샘플</th><th>상태</th><th>인물</th><th>유사도</th><th>Track</th><th>얼굴 크기</th><th>이미지</th></tr></thead>
-                <tbody id="face-results"><tr><td colspan="7" class="empty">결과가 없습니다.</td></tr></tbody>
+                <thead><tr><th>샘플</th><th>상태</th><th>인물</th><th>유사도</th><th>Track</th><th>Person</th><th>얼굴 크기</th><th>이미지</th></tr></thead>
+                <tbody id="face-results"><tr><td colspan="8" class="empty">결과가 없습니다.</td></tr></tbody>
               </table>
             </div>
           </section>
@@ -548,14 +548,14 @@
         const analysisRunId = state.session.analysis_run_id;
         const replacement = document.createElement("tbody");
         if (!analysisRunId) {
-          const row = replacement.insertRow(); const cell = row.insertCell(); cell.colSpan = 7; cell.className = "empty"; cell.textContent = "분석 실행 준비 중입니다.";
+          const row = replacement.insertRow(); const cell = row.insertCell(); cell.colSpan = 8; cell.className = "empty"; cell.textContent = "분석 실행 준비 중입니다.";
           document.getElementById("face-results").replaceChildren(...replacement.children);
           return;
         }
         const result = await api(`/face-match-events?analysis_run_id=${encodeURIComponent(analysisRunId)}&limit=100`);
         if (!state.session || state.session.id !== sessionId) return;
         if (!result.items.length) {
-          const row = replacement.insertRow(); const cell = row.insertCell(); cell.colSpan = 7; cell.className = "empty"; cell.textContent = "아직 얼굴 인식 결과가 없습니다.";
+          const row = replacement.insertRow(); const cell = row.insertCell(); cell.colSpan = 8; cell.className = "empty"; cell.textContent = "아직 얼굴 인식 결과가 없습니다.";
         } else {
           for (const item of result.items) {
             const row = replacement.insertRow();
@@ -564,6 +564,9 @@
             row.insertCell().textContent = item.external_id || item.display_name || "unknown";
             row.insertCell().textContent = Number(item.best_similarity).toFixed(3);
             row.insertCell().textContent = item.track_id ?? "—";
+            const personCell = row.insertCell();
+            personCell.textContent = item.person_instance_id ? item.person_instance_id.slice(0, 8) : "—";
+            personCell.title = item.person_instance_id || "";
             row.insertCell().textContent = `${item.face_bounds.width}×${item.face_bounds.height}`;
             const imageCell = row.insertCell(); const url = state.snapshotsBySample.get(item.sample_index);
             if (url) {
@@ -573,9 +576,14 @@
         }
         document.getElementById("face-results").replaceChildren(...replacement.children);
         try {
-          const summary = await api(`/analysis-runs/${encodeURIComponent(analysisRunId)}/face-match-summary`);
+          const [faceSummary, personSummary] = await Promise.all([
+            api(`/analysis-runs/${encodeURIComponent(analysisRunId)}/face-match-summary`),
+            api(`/analysis-runs/${encodeURIComponent(analysisRunId)}/person-instance-summary`)
+          ]);
           if (!state.session || state.session.id !== sessionId) return;
-          text("faces", formatNumber(summary.detected_faces)); text("matches", formatNumber(summary.matched_faces)); text("unknowns", formatNumber(summary.unknown_faces));
+          text("faces", formatNumber(faceSummary.detected_faces));
+          text("matches", formatNumber(personSummary.matched_instances));
+          text("unknowns", formatNumber(personSummary.unknown_instances));
         } catch (_) { /* final worker summary remains available */ }
       }
 
