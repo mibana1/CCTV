@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from cctv.core.settings import Settings
 from cctv.db import IdentityRepository, initialize_database
-from cctv.identity.face import OpenCvSFaceExtractor
+from cctv.identity.face import FaceEmbeddingModelMetadata, OpenCvSFaceExtractor
 from cctv.identity.matching import (
     FaceIdentityMatcher,
     FaceMatchingConsumer,
@@ -27,6 +27,13 @@ def create_sface_matching_consumer(
 ) -> FaceMatchingConsumer:
     """Load enabled registered identities and build one sequential frame consumer."""
     initialize_database(settings.database_path)
+    metadata = FaceEmbeddingModelMetadata()
+    candidates = IdentityRepository(settings.database_path).list_embedding_vectors(
+        model_name=metadata.model_name,
+        model_version=metadata.model_version,
+        dimension=metadata.dimension,
+        enabled_identities_only=True,
+    )
     extractor = OpenCvSFaceExtractor(
         settings.face_detection_model_path,
         settings.face_embedding_model_path,
@@ -36,12 +43,6 @@ def create_sface_matching_consumer(
         max_input_dimension=settings.face_detection_max_input_dimension,
     )
     metadata = extractor.metadata
-    candidates = IdentityRepository(settings.database_path).list_embedding_vectors(
-        model_name=metadata.model_name,
-        model_version=metadata.model_version,
-        dimension=metadata.dimension,
-        enabled_identities_only=True,
-    )
     matcher = FaceIdentityMatcher(
         candidates,
         similarity_threshold=(

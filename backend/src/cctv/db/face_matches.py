@@ -31,7 +31,7 @@ class FaceMatchEventInput:
     identity_id: str | None
     external_id: str | None
     display_name: str | None
-    best_candidate_identity_id: str
+    best_candidate_identity_id: str | None
     best_candidate_external_id: str | None
     best_similarity: float
     second_best_similarity: float | None
@@ -61,7 +61,7 @@ class FaceMatchEventRecord:
     identity_id: str | None
     external_id: str | None
     display_name: str | None
-    best_candidate_identity_id: str
+    best_candidate_identity_id: str | None
     best_candidate_external_id: str | None
     best_similarity: float
     second_best_similarity: float | None
@@ -237,7 +237,11 @@ def _event_from_row(row: sqlite3.Row) -> FaceMatchEventRecord:
         identity_id=str(row["identity_id"]) if row["identity_id"] is not None else None,
         external_id=str(row["external_id"]) if row["external_id"] is not None else None,
         display_name=str(row["display_name"]) if row["display_name"] is not None else None,
-        best_candidate_identity_id=str(row["best_candidate_identity_id"]),
+        best_candidate_identity_id=(
+            str(row["best_candidate_identity_id"])
+            if row["best_candidate_identity_id"] is not None
+            else None
+        ),
         best_candidate_external_id=(
             str(row["best_candidate_external_id"])
             if row["best_candidate_external_id"] is not None

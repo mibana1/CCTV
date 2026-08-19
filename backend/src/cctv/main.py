@@ -17,9 +17,10 @@ from cctv.cameras import (
     MediaMtxClient,
 )
 from cctv.core.logging import configure_logging, shutdown_logging
-from cctv.core.settings import Settings, get_settings
+from cctv.core.settings import AppMode, Settings, get_settings
 from cctv.dashboard import TestSessionManager
 from cctv.db import CameraRepository, initialize_database
+from cctv.hiperwall import HiperwallActionWorker, HiperwallClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ def create_app(
     settings: Settings | None = None,
     test_session_manager: TestSessionManager | None = None,
     camera_manager: CameraManager | None = None,
+    hiperwall_client: HiperwallClient | None = None,
 ) -> FastAPI:
     """Build an application with validated settings and database startup."""
     application_settings = settings or get_settings()
@@ -72,6 +74,17 @@ def create_app(
         )
         owned_camera_manager: CameraManagementService | None = None
         camera_reconciler: CameraReconciler | None = None
+        hiperwall_worker: HiperwallActionWorker | None = None
+        if (
+            application_settings.app_mode is AppMode.LIVE
+            and application_settings.hiperwall_executor_enabled
+        ):
+            hiperwall_worker = HiperwallActionWorker(
+                application_settings,
+                client=hiperwall_client,
+            )
+            hiperwall_worker.start()
+        application.state.hiperwall_worker = hiperwall_worker
         if camera_manager is not None:
             application.state.camera_manager = camera_manager
         elif application_settings.mediamtx_dynamic_paths_enabled:
@@ -105,6 +118,8 @@ def create_app(
         try:
             yield
         finally:
+            if hiperwall_worker is not None:
+                hiperwall_worker.stop()
             if camera_reconciler is not None:
                 camera_reconciler.stop()
             if owned_camera_manager is not None:

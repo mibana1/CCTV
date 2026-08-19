@@ -30,6 +30,7 @@ def create_resolving_face_observation_sink(
 
     def persist(observation: FaceMatchObservation, track_id: int | None) -> None:
         decision = observation.decision
+        best_candidate = decision.best_candidate
         event = event_repository.save_event(
             analysis_run_id,
             FaceMatchEventInput(
@@ -52,15 +53,20 @@ def create_resolving_face_observation_sink(
                 identity_id=decision.identity_id,
                 external_id=decision.external_id,
                 display_name=decision.display_name,
-                best_candidate_identity_id=decision.best_candidate.identity_id,
-                best_candidate_external_id=decision.best_candidate.external_id,
-                best_similarity=decision.best_candidate.similarity,
+                best_candidate_identity_id=(
+                    best_candidate.identity_id if best_candidate is not None else None
+                ),
+                best_candidate_external_id=(
+                    best_candidate.external_id if best_candidate is not None else None
+                ),
+                best_similarity=decision.best_similarity,
                 second_best_similarity=decision.second_best_similarity,
                 similarity_threshold=decision.similarity_threshold,
                 minimum_margin=decision.minimum_margin,
             ),
         )
-        resolver.resolve(event)
+        if best_candidate is not None:
+            resolver.resolve(event)
 
     return persist
 

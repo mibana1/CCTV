@@ -34,6 +34,7 @@ class FaceMatchRejectionReason(StrEnum):
 
     BELOW_THRESHOLD = "below_threshold"
     AMBIGUOUS = "ambiguous"
+    NO_CANDIDATES = "no_candidates"
 
 
 class FrameFaceExtractor(Protocol):
@@ -64,7 +65,7 @@ class FaceMatchDecision:
 
     status: FaceMatchStatus
     rejection_reason: FaceMatchRejectionReason | None
-    best_candidate: IdentitySimilarity
+    best_candidate: IdentitySimilarity | None
     second_best_similarity: float | None
     similarity_threshold: float
     minimum_margin: float
@@ -75,15 +76,19 @@ class FaceMatchDecision:
 
     @property
     def identity_id(self) -> str | None:
-        return self.best_candidate.identity_id if self.matched else None
+        return self.best_candidate.identity_id if self.matched and self.best_candidate else None
 
     @property
     def external_id(self) -> str | None:
-        return self.best_candidate.external_id if self.matched else None
+        return self.best_candidate.external_id if self.matched and self.best_candidate else None
 
     @property
     def display_name(self) -> str | None:
-        return self.best_candidate.display_name if self.matched else None
+        return self.best_candidate.display_name if self.matched and self.best_candidate else None
+
+    @property
+    def best_similarity(self) -> float:
+        return self.best_candidate.similarity if self.best_candidate is not None else 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,18 +146,26 @@ class FaceIdentityMatcher:
         if not isfinite(minimum_margin) or not 0 <= minimum_margin <= 1:
             raise ValueError("minimum_margin must be between 0 and 1")
         self.candidates = tuple(candidates)
-        if not self.candidates:
-            raise FaceMatchingError("no enabled identity embeddings are registered")
         dimensions = {len(candidate.vector) for candidate in self.candidates}
-        if len(dimensions) != 1:
+        if len(dimensions) > 1:
             raise FaceMatchingError("identity embedding candidates must have one dimension")
-        self.dimension = dimensions.pop()
+        self.dimension = dimensions.pop() if dimensions else None
         self.similarity_threshold = float(similarity_threshold)
         self.minimum_margin = float(minimum_margin)
         self.identity_count = len({candidate.identity.id for candidate in self.candidates})
 
     def match(self, vector: Sequence[float]) -> FaceMatchDecision:
         """Return the best per-identity cosine score and an acceptance decision."""
+        if self.dimension is None:
+            _normalize_vector(vector, expected_dimension=len(vector))
+            return FaceMatchDecision(
+                status=FaceMatchStatus.UNKNOWN,
+                rejection_reason=FaceMatchRejectionReason.NO_CANDIDATES,
+                best_candidate=None,
+                second_best_similarity=None,
+                similarity_threshold=self.similarity_threshold,
+                minimum_margin=self.minimum_margin,
+            )
         normalized = _normalize_vector(vector, expected_dimension=self.dimension)
         scores_by_identity: dict[str, IdentitySimilarity] = {}
         for candidate in self.candidates:
@@ -383,12 +396,17 @@ class FaceMatchingConsumer:
             )
             observations.append(observation)
             self.detected_faces += 1
-            similarity = decision.best_candidate.similarity
-            self.best_similarity = (
-                similarity if self.best_similarity is None else max(self.best_similarity, similarity)
-            )
+            similarity = decision.best_similarity
+            if decision.best_candidate is not None:
+                self.best_similarity = (
+                    similarity
+                    if self.best_similarity is None
+                    else max(self.best_similarity, similarity)
+                )
             if decision.matched:
                 self.matched_faces += 1
+                if decision.best_candidate is None:
+                    raise FaceMatchingError("matched face decision requires a best candidate")
                 self.matched_identity_counts[decision.best_candidate.identity_id] += 1
             else:
                 self.unknown_faces += 1
@@ -415,8 +433,16 @@ class FaceMatchingConsumer:
                     "identity_id": decision.identity_id,
                     "external_id": decision.external_id,
                     "display_name": decision.display_name,
-                    "best_candidate_identity_id": decision.best_candidate.identity_id,
-                    "best_candidate_external_id": decision.best_candidate.external_id,
+                    "best_candidate_identity_id": (
+                        decision.best_candidate.identity_id
+                        if decision.best_candidate is not None
+                        else None
+                    ),
+                    "best_candidate_external_id": (
+                        decision.best_candidate.external_id
+                        if decision.best_candidate is not None
+                        else None
+                    ),
                     "best_similarity": similarity,
                     "second_best_similarity": decision.second_best_similarity,
                     "similarity_threshold": decision.similarity_threshold,

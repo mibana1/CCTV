@@ -1,4 +1,4 @@
-"""Read-only API for Hiperwall DRY RUN work records."""
+"""Read-only API for simulated and LIVE Hiperwall work records."""
 
 from dataclasses import asdict
 from datetime import datetime
@@ -27,11 +27,18 @@ class DisplayActionResponse(BaseModel):
     event_type: str
     event_state: str
     action_type: Literal["open_source", "restore_layout"]
-    mode: Literal["dry_run"]
-    status: Literal["simulated"]
+    mode: Literal["dry_run", "live"]
+    status: Literal["simulated", "pending", "processing", "retry", "succeeded", "failed"]
     request: dict[str, Any]
     result: dict[str, Any]
+    attempt_count: int
+    available_at: datetime
+    last_attempt_at: datetime | None
+    completed_at: datetime | None
+    last_error_code: str | None
+    last_error_message: str | None
     created_at: datetime
+    updated_at: datetime
 
 
 class DisplayActionPageResponse(BaseModel):
@@ -58,7 +65,10 @@ def list_hiperwall_actions(
         Literal["open_source", "restore_layout"] | None,
         Query(),
     ] = None,
-    action_status: Annotated[Literal["simulated"] | None, Query(alias="status")] = None,
+    action_status: Annotated[
+        Literal["simulated", "pending", "processing", "retry", "succeeded", "failed"] | None,
+        Query(alias="status"),
+    ] = None,
 ) -> DisplayActionPageResponse:
     result = _repository(request).list(
         page=page,

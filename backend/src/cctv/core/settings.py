@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     persist_detections: bool = True
     rules_enabled: bool = True
     hiperwall_dry_run_enabled: bool = True
+    hiperwall_executor_enabled: bool = True
     host: str = "127.0.0.1"
     port: int = Field(default=8000, ge=1, le=65535)
     log_level: str = "INFO"
@@ -132,6 +133,46 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="HIPERWALL_TOKEN",
     )
+    hiperwall_user: str = Field(
+        default="",
+        validation_alias="HIPERWALL_USER",
+    )
+    hiperwall_timeout_seconds: float = Field(
+        default=3.0,
+        gt=0,
+        le=60,
+        validation_alias="HIPERWALL_TIMEOUT_SECONDS",
+    )
+    hiperwall_poll_interval_seconds: float = Field(
+        default=0.5,
+        ge=0.1,
+        le=60,
+        validation_alias="HIPERWALL_POLL_INTERVAL_SECONDS",
+    )
+    hiperwall_max_attempts: int = Field(
+        default=8,
+        ge=1,
+        le=100,
+        validation_alias="HIPERWALL_MAX_ATTEMPTS",
+    )
+    hiperwall_retry_base_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        le=3_600,
+        validation_alias="HIPERWALL_RETRY_BASE_SECONDS",
+    )
+    hiperwall_retry_max_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        le=86_400,
+        validation_alias="HIPERWALL_RETRY_MAX_SECONDS",
+    )
+    hiperwall_default_display_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=86_400,
+        validation_alias="HIPERWALL_DEFAULT_DISPLAY_SECONDS",
+    )
 
     @field_validator("log_level")
     @classmethod
@@ -153,6 +194,11 @@ class Settings(BaseSettings):
     def normalize_auth_mode(cls, value: object) -> object:
         """Accept case-insensitive authentication mode values."""
         return value.lower() if isinstance(value, str) else value
+
+    @field_validator("hiperwall_user")
+    @classmethod
+    def normalize_hiperwall_user(cls, value: str) -> str:
+        return value.strip()
 
     @field_validator("detector_type")
     @classmethod
@@ -185,6 +231,7 @@ class Settings(BaseSettings):
         "model_classes_path",
         "rtsp_input_url",
         "camera_credential_key",
+        "hiperwall_base_url",
         mode="before",
     )
     @classmethod
@@ -227,6 +274,26 @@ class Settings(BaseSettings):
         ):
             raise ValueError(
                 "MediaMTX URL must be a credential-free http(s) URL without query or fragment"
+            )
+        return normalized
+
+    @field_validator("hiperwall_base_url")
+    @classmethod
+    def validate_hiperwall_http_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "HIPERWALL_BASE_URL must be a credential-free http(s) URL without query or fragment"
             )
         return normalized
 
@@ -274,12 +341,26 @@ class Settings(BaseSettings):
             )
         if self.app_mode is not AppMode.LIVE:
             return self
+        if not self.hiperwall_executor_enabled:
+            return self
         if not self.hiperwall_base_url:
             raise ValueError("HIPERWALL_BASE_URL is required when CCTV_APP_MODE=live")
-        if self.hiperwall_auth_mode == "token" and (
-            self.hiperwall_token is None or not self.hiperwall_token.get_secret_value()
-        ):
-            raise ValueError("HIPERWALL_TOKEN is required for token authentication in live mode")
+        if self.hiperwall_auth_mode == "crypto":
+            raise ValueError("HIPERWALL_AUTH_MODE=crypto is not supported in live mode")
+        if self.hiperwall_auth_mode == "token":
+            if not self.hiperwall_user:
+                raise ValueError(
+                    "HIPERWALL_USER is required for token authentication in live mode"
+                )
+            if self.hiperwall_token is None or not self.hiperwall_token.get_secret_value():
+                raise ValueError(
+                    "HIPERWALL_TOKEN is required for token authentication in live mode"
+                )
+        if self.hiperwall_retry_max_seconds < self.hiperwall_retry_base_seconds:
+            raise ValueError(
+                "HIPERWALL_RETRY_MAX_SECONDS must be greater than or equal to "
+                "HIPERWALL_RETRY_BASE_SECONDS"
+            )
         return self
 
     @property

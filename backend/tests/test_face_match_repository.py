@@ -54,19 +54,48 @@ def test_face_match_repository_persists_filters_and_summarizes_events(tmp_path: 
 
     matched = repository.save_event(run.id, _event(matched=True, sample_index=1))
     unknown = repository.save_event(run.id, _event(matched=False, sample_index=2))
+    no_candidate = repository.save_event(
+        run.id,
+        FaceMatchEventInput(
+            source_index=30,
+            sample_index=3,
+            source_timestamp_seconds=1.5,
+            face_index=0,
+            track_id=4,
+            face_x=10,
+            face_y=20,
+            face_width=30,
+            face_height=40,
+            detection_confidence=0.9,
+            match_status="unknown",
+            rejection_reason="no_candidates",
+            identity_id=None,
+            external_id=None,
+            display_name=None,
+            best_candidate_identity_id=None,
+            best_candidate_external_id=None,
+            best_similarity=0,
+            second_best_similarity=None,
+            similarity_threshold=0.45,
+            minimum_margin=0.05,
+        ),
+    )
     detections.finish_analysis_run(run.id, status=AnalysisRunStatus.COMPLETED)
 
     page = repository.list_events(analysis_run_id=run.id)
     matched_page = repository.list_events(analysis_run_id=run.id, match_status="matched")
     summary = repository.summarize_run(run.id)
 
-    assert page.total == 2
-    assert [item.id for item in page.items] == [unknown.id, matched.id]
+    assert page.total == 3
+    assert [item.id for item in page.items] == [no_candidate.id, unknown.id, matched.id]
+    assert no_candidate.best_candidate_identity_id is None
+    assert no_candidate.rejection_reason == "no_candidates"
+    assert no_candidate.best_similarity == 0
     assert matched_page.total == 1
     assert matched_page.items[0].identity_id == "emp-001"
     assert matched_page.items[0].track_id == 2
-    assert summary.detected_faces == 2
+    assert summary.detected_faces == 3
     assert summary.matched_faces == 1
-    assert summary.unknown_faces == 1
+    assert summary.unknown_faces == 2
     assert summary.best_similarity == 0.62
 

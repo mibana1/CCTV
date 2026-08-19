@@ -11,7 +11,6 @@ from cctv.identity import (
     FaceBounds,
     FaceIdentityMatcher,
     FaceMatchingConsumer,
-    FaceMatchingError,
     FaceMatchRejectionReason,
     FaceMatchStatus,
 )
@@ -118,9 +117,49 @@ def test_matcher_rejects_ambiguous_or_low_similarity_faces(tmp_path: Path) -> No
     assert low_similarity.identity_id is None
 
 
-def test_matcher_requires_registered_candidates() -> None:
-    with pytest.raises(FaceMatchingError, match="no enabled identity embeddings"):
-        FaceIdentityMatcher(())
+def test_matcher_marks_faces_unknown_without_registered_candidates() -> None:
+    matcher = FaceIdentityMatcher(())
+
+    decision = matcher.match((1, 0, 0))
+
+    assert decision.status is FaceMatchStatus.UNKNOWN
+    assert decision.rejection_reason is FaceMatchRejectionReason.NO_CANDIDATES
+    assert decision.best_candidate is None
+    assert decision.best_similarity == 0
+    assert decision.identity_id is None
+    assert matcher.identity_count == 0
+
+
+def test_consumer_reports_detected_faces_without_registered_candidates() -> None:
+    class FakeExtractor:
+        def extract_many(self, image: object, *, source_name: str = "frame"):
+            del image, source_name
+            return (DetectedFaceEmbedding(FaceBounds(1, 2, 30, 40), (1, 0, 0), 0.98),)
+
+    observations = []
+    consumer = FaceMatchingConsumer(
+        FakeExtractor(),
+        FaceIdentityMatcher(()),
+        source_name="camera-empty",
+        observation_sink=lambda observation, track_id: observations.append(
+            (observation, track_id)
+        ),
+    )
+
+    consumer(
+        DecodedFrame(
+            source_index=1,
+            sample_index=2,
+            timestamp_seconds=1.0,
+            image=np.zeros((100, 100, 3), dtype=np.uint8),
+        )
+    )
+
+    assert consumer.summary.candidate_identity_count == 0
+    assert consumer.summary.detected_faces == 1
+    assert consumer.summary.unknown_faces == 1
+    assert consumer.summary.best_similarity is None
+    assert observations[0][0].decision.rejection_reason is FaceMatchRejectionReason.NO_CANDIDATES
 
 
 def test_face_matching_consumer_aggregates_privacy_safe_results(tmp_path: Path) -> None:

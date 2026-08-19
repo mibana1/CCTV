@@ -59,7 +59,7 @@ Hiperwall 같은 외부 시스템의 실제 변경 작업은 차단합니다. �
 않으면 설정 검증 단계에서 애플리케이션 시작이 실패합니다. CUDA 장치의 실제
 사용 가능 여부는 추론 Worker 구현 단계에서 별도로 검사합니다.
 
-### 규칙 이벤트 → Hiperwall DRY RUN
+### 규칙 이벤트 → Hiperwall DRY RUN/LIVE
 
 `CCTV_APP_MODE=dry_run`과 `CCTV_HIPERWALL_DRY_RUN_ENABLED=true`이면 로컬·RTSP
 Worker가 규칙 이벤트를 Hiperwall 작업으로 변환합니다. `started`·`occurred`
@@ -73,7 +73,84 @@ curl "http://127.0.0.1:8000/hiperwall-actions?analysis_run_id=<RUN_ID>"
 ```
 
 응답의 `result.external_request_sent`는 항상 `false`입니다. 현재 구현은 DRY RUN
-전용이며 LIVE 모드에서는 이 계획기를 활성화하지 않습니다.
+기록이며, 설정된 매핑의 콘텐츠·Zone·배치도 요청 데이터에서 미리 확인할 수
+있습니다.
+
+LIVE 모드에서는 영상 Worker가 Hiperwall을 직접 호출하지 않습니다. 규칙 이벤트와
+Hiperwall 작업을 같은 SQLite 트랜잭션에 먼저 저장하고, Backend의 전용 Worker가
+`POST /xmlcommand` 요청을 전송합니다. Hiperwall 장애가 발생하면 지수 백오프로
+재시도하며, 재시작 전에 처리 중이던 작업도 다시 가져옵니다.
+
+```text
+RTSP 분석 → 규칙 이벤트 → display_actions LIVE 작업
+                             ↓
+Backend Hiperwall Worker → HiperInterface /xmlcommand → 지정 Zone에 콘텐츠 표시
+```
+
+- `started`: 콘텐츠 `open`
+- `ended`: 같은 관리 인스턴스 `close`
+- `occurred`: 콘텐츠 `open` 후 `display_seconds`가 지나면 자동 `close`
+- HTTP 2xx 응답이라도 XML에 `<Error>`가 있으면 실패로 기록
+
+Hiperwall에는 MediaMTX의 RTSP 주소를 HiperSource 콘텐츠로 먼저 등록해야 합니다.
+API는 영상을 전송하지 않고 등록된 콘텐츠의 이름 또는 UUID를 열고 닫습니다.
+
+#### 규칙별 콘텐츠와 Zone 설정
+
+기존 규칙에는 다음 API로 Hiperwall 매핑을 추가합니다. 실행 중인 영상 Worker는
+규칙을 시작할 때 읽은 스냅샷을 사용하므로 매핑 변경 후 해당 Worker를 다시
+시작합니다.
+
+```bash
+curl -X PUT "http://127.0.0.1:18000/rules/<RULE_ID>/hiperwall" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "content_name": "Entrance Camera",
+    "zone_id": "Security Alert Zone",
+    "layout": {
+      "mode": "pixels",
+      "x": 0,
+      "y": 0,
+      "width": 1920,
+      "height": 1080
+    },
+    "display_seconds": 30
+  }'
+```
+
+`content_name` 대신 `content_uuid`를 사용할 수 있지만 둘을 동시에 지정할 수는
+없습니다. `layout.mode`는 `pixels` 또는 `percent`이며, 위치가 필요 없으면
+`layout`을 생략할 수 있습니다. 매핑을 해제하면 해당 규칙 이벤트는 LIVE 모드에서
+Hiperwall 작업을 만들지 않습니다.
+
+```bash
+curl -X DELETE "http://127.0.0.1:18000/rules/<RULE_ID>/hiperwall"
+```
+
+#### LIVE 설정
+
+Docker Desktop에서 HiperInterface가 Windows 호스트의 8000번 포트를 사용한다면
+다음처럼 설정합니다. 다른 HiperController를 사용하면 LAN IP로 바꿉니다.
+
+```dotenv
+CCTV_APP_MODE=live
+HIPERWALL_BASE_URL=http://host.docker.internal:8000
+HIPERWALL_AUTH_MODE=token
+HIPERWALL_USER=cctv_bridge
+HIPERWALL_TOKEN=replace-with-hiperinterface-token
+```
+
+인증이 없는 HiperInterface는 `HIPERWALL_AUTH_MODE=none`을 사용합니다. 현재 LIVE
+클라이언트는 `none`과 `token`만 지원하며 `crypto`는 안전하게 거부합니다. 최초
+실장 테스트 전에는 DRY RUN에서 `/hiperwall-actions`의 대상과 배치를 확인합니다.
+
+LIVE 작업 상태는 같은 API에서 `pending`, `processing`, `retry`, `succeeded`,
+`failed`로 조회할 수 있습니다.
+
+```bash
+curl "http://127.0.0.1:18000/hiperwall-actions?status=succeeded"
+curl "http://127.0.0.1:18000/hiperwall-actions?status=failed"
+```
 
 ## Docker 시작
 

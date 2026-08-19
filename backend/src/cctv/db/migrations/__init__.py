@@ -17,6 +17,9 @@ from cctv.db.migrations.v0010_face_match_events import apply as apply_v0010
 from cctv.db.migrations.v0011_camera_stream_paths import apply as apply_v0011
 from cctv.db.migrations.v0012_camera_rtsp_sources import apply as apply_v0012
 from cctv.db.migrations.v0013_person_instances import apply as apply_v0013
+from cctv.db.migrations.v0014_hiperwall_live_actions import apply as apply_v0014
+from cctv.db.migrations.v0015_camera_always_connected import apply as apply_v0015
+from cctv.db.migrations.v0016_candidate_free_face_events import apply as apply_v0016
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,9 @@ MIGRATIONS = (
     Migration(version=11, name="camera_stream_paths", apply=apply_v0011),
     Migration(version=12, name="camera_rtsp_sources", apply=apply_v0012),
     Migration(version=13, name="person_instances", apply=apply_v0013),
+    Migration(version=14, name="hiperwall_live_actions", apply=apply_v0014),
+    Migration(version=15, name="camera_always_connected", apply=apply_v0015),
+    Migration(version=16, name="candidate_free_face_events", apply=apply_v0016),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

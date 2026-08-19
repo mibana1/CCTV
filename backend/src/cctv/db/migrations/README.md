@@ -17,6 +17,8 @@ Version 11 adds a unique MediaMTX stream path to camera registrations for local
 browser previews. Version 12 adds an encrypted RTSP source column, a redacted
 endpoint, on-demand behavior, and MediaMTX provisioning state. Version 13 adds
 session-scoped `person_instances`, their `track_identity_links`, and the optional
-face-event association used to stitch fragmented tracker IDs. Add later domain
+face-event association used to stitch fragmented tracker IDs. Version 15 converts
+existing camera registrations to always-connected RTSP sources. Version 16 allows
+Unknown face events without a registered identity comparison candidate. Add later domain
 tables as new versioned migration modules; never edit a migration that has been
 deployed.

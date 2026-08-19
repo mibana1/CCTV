@@ -233,8 +233,9 @@ Fernet 암호문으로만 SQLite에 저장하며 API·로그에는 계정이나 
 
 MediaMTX Control API는 `127.0.0.1:9997`에만 바인딩합니다. 내부 전용 네트워크의
 프록시가 Backend 고정 주소만 허용해 API를 전달하며 다른 컨테이너나 호스트에는
-포트를 공개하지 않습니다. 등록 경로는 기본적으로 `sourceOnDemand=true`이며,
-주기적 동기화가 MediaMTX 재시작 뒤에도 활성 카메라 경로를 복원합니다.
+포트를 공개하지 않습니다. 등록 경로는 `sourceOnDemand=false`이고
+`hlsAlwaysRemux=true`이므로 RTSP pull과 HLS 변환을 항상 유지합니다. 주기적
+동기화가 MediaMTX 재시작 뒤에도 활성 카메라 경로를 복원합니다.
 대시보드가 실행하는 워커는 API 요청 처리와 분리된 자식 프로세스이며 한 번에
 하나만 허용됩니다. CPU·메모리는 Linux `/proc`에서 수집하고 SSE로 진행 상태와
 얼굴 판정 이벤트를 전달합니다. 운영·LIVE 모드 또는 원격 Host에서는 모든 테스트

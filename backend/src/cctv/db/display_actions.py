@@ -1,4 +1,4 @@
-"""SQLite repository for simulated Hiperwall display actions."""
+"""SQLite repository for simulated and durable LIVE Hiperwall actions."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True, slots=True)
 class DisplayActionRecord:
-    """One simulated action joined with its rule-event and analysis context."""
+    """One action joined with its rule-event and analysis context."""
 
     id: str
     rule_event_id: str
@@ -35,7 +35,14 @@ class DisplayActionRecord:
     status: str
     request: dict[str, Any]
     result: dict[str, Any]
+    attempt_count: int
+    available_at: datetime
+    last_attempt_at: datetime | None
+    completed_at: datetime | None
+    last_error_code: str | None
+    last_error_message: str | None
     created_at: datetime
+    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +111,130 @@ class DisplayActionRepository:
             total=total,
         )
 
+    def recover_interrupted(self) -> int:
+        """Return actions abandoned during process termination to the retry queue."""
+        now = _utc_text()
+        with closing(connect_database(self.database_path)) as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE display_actions
+                SET status = 'retry', available_at = ?, updated_at = ?
+                WHERE mode = 'live' AND status = 'processing'
+                """,
+                (now, now),
+            )
+        return cursor.rowcount
+
+    def claim_next(self, *, now: datetime | None = None) -> DisplayActionRecord | None:
+        """Atomically lease the oldest due LIVE action to one worker."""
+        claimed_at = _utc_text(now)
+        with closing(connect_database(self.database_path)) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = connection.execute(
+                    """
+                    SELECT id
+                    FROM display_actions
+                    WHERE mode = 'live'
+                        AND status IN ('pending', 'retry')
+                        AND available_at <= ?
+                    ORDER BY available_at, created_at, id
+                    LIMIT 1
+                    """,
+                    (claimed_at,),
+                ).fetchone()
+                if row is None:
+                    connection.commit()
+                    return None
+                action_id = str(row["id"])
+                cursor = connection.execute(
+                    """
+                    UPDATE display_actions
+                    SET status = 'processing',
+                        attempt_count = attempt_count + 1,
+                        last_attempt_at = ?,
+                        updated_at = ?
+                    WHERE id = ? AND status IN ('pending', 'retry')
+                    """,
+                    (claimed_at, claimed_at, action_id),
+                )
+                if cursor.rowcount != 1:
+                    connection.rollback()
+                    return None
+                claimed = connection.execute(
+                    f"{_SELECT_ACTIONS} WHERE action.id = ?",
+                    (action_id,),
+                ).fetchone()
+                connection.commit()
+            except Exception:
+                connection.rollback()
+                raise
+        return _record_from_row(claimed) if claimed is not None else None
+
+    def mark_succeeded(
+        self,
+        action_id: str,
+        *,
+        result: dict[str, Any],
+        followup_action: DisplayAction | None = None,
+    ) -> None:
+        now = _utc_text()
+        with closing(connect_database(self.database_path)) as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE display_actions
+                SET status = 'succeeded', result_json = ?, completed_at = ?,
+                    last_error_code = NULL, last_error_message = NULL, updated_at = ?
+                WHERE id = ? AND status = 'processing'
+                """,
+                (_json_object(result, "display action result"), now, now, action_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Hiperwall action is not in processing state")
+            if followup_action is not None:
+                insert_display_actions(connection, actions=(followup_action,))
+
+    def mark_failed(
+        self,
+        action_id: str,
+        *,
+        error_code: str,
+        error_message: str,
+        retry_after_seconds: float | None,
+    ) -> str:
+        """Record a sanitized failure and either retry or terminally fail it."""
+        now_value = datetime.now(UTC)
+        now = _utc_text(now_value)
+        if retry_after_seconds is None:
+            status = "failed"
+            available_at = now
+            completed_at = now
+        else:
+            status = "retry"
+            available_at = _utc_text(now_value.timestamp() + retry_after_seconds)
+            completed_at = None
+        with closing(connect_database(self.database_path)) as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE display_actions
+                SET status = ?, available_at = ?, completed_at = ?,
+                    last_error_code = ?, last_error_message = ?, updated_at = ?
+                WHERE id = ? AND status = 'processing'
+                """,
+                (
+                    status,
+                    available_at,
+                    completed_at,
+                    _limited_text(error_code, 128),
+                    _limited_text(error_message, 512),
+                    now,
+                    action_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Hiperwall action is not in processing state")
+        return status
+
 
 _JOIN_ACTIONS = """
     FROM display_actions AS action
@@ -133,8 +264,9 @@ def insert_display_actions(
     connection.executemany(
         """
         INSERT INTO display_actions (
-            id, rule_event_id, action_type, mode, status, request_json, result_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            id, rule_event_id, action_type, mode, status, request_json, result_json,
+            available_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             (
@@ -145,6 +277,8 @@ def insert_display_actions(
                 action.status,
                 _json_object(action.request, "display action request"),
                 _json_object(action.result, "display action result"),
+                _utc_text(action.available_at),
+                _utc_text(),
             )
             for action in actions
         ),
@@ -185,6 +319,26 @@ def _datetime_from_text(value: str) -> datetime:
     return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
+def _optional_datetime(value: object) -> datetime | None:
+    return _datetime_from_text(str(value)) if value is not None else None
+
+
+def _utc_text(value: datetime | float | None = None) -> str:
+    if isinstance(value, (int, float)):
+        normalized = datetime.fromtimestamp(value, UTC)
+    elif isinstance(value, datetime):
+        normalized = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        normalized = normalized.astimezone(UTC)
+    else:
+        normalized = datetime.now(UTC)
+    return normalized.isoformat()
+
+
+def _limited_text(value: str, maximum: int) -> str:
+    normalized = str(value).strip()
+    return (normalized or "unknown")[:maximum]
+
+
 def _record_from_row(row: sqlite3.Row) -> DisplayActionRecord:
     return DisplayActionRecord(
         id=str(row["id"]),
@@ -200,7 +354,20 @@ def _record_from_row(row: sqlite3.Row) -> DisplayActionRecord:
         status=str(row["status"]),
         request=_json_from_text(str(row["request_json"])),
         result=_json_from_text(str(row["result_json"])),
+        attempt_count=int(row["attempt_count"]),
+        available_at=_datetime_from_text(str(row["available_at"])),
+        last_attempt_at=_optional_datetime(row["last_attempt_at"]),
+        completed_at=_optional_datetime(row["completed_at"]),
+        last_error_code=(
+            str(row["last_error_code"]) if row["last_error_code"] is not None else None
+        ),
+        last_error_message=(
+            str(row["last_error_message"])
+            if row["last_error_message"] is not None
+            else None
+        ),
         created_at=_datetime_from_text(str(row["created_at"])),
+        updated_at=_datetime_from_text(str(row["updated_at"])),
     )
 
 

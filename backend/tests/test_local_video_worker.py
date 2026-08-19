@@ -226,7 +226,9 @@ def test_local_video_cli_persists_yolo_results(
         "dry_run_configured": True,
         "dry_run_enabled": True,
         "simulated_action_count": 1,
+        "queued_live_action_count": 0,
         "external_request_sent": False,
+        "mode": "dry_run",
     }
     assert runs.total == 1
     assert runs.items[0].status is AnalysisRunStatus.COMPLETED

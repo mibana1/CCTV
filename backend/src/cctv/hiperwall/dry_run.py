@@ -7,8 +7,9 @@ from collections.abc import Collection
 
 from cctv.core.execution import external_action_allowed
 from cctv.core.settings import AppMode, Settings
+from cctv.hiperwall.mapping import mapping_from_rule
 from cctv.hiperwall.models import DisplayAction
-from cctv.rules import RuleEvent
+from cctv.rules import RuleDefinition, RuleEvent
 
 logger = logging.getLogger(__name__)
 
@@ -16,10 +17,26 @@ logger = logging.getLogger(__name__)
 class HiperwallDryRunPlanner:
     """Build Hiperwall work records while guaranteeing that no request is sent."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        rules: Collection[RuleDefinition] = (),
+    ) -> None:
         if settings.app_mode is not AppMode.DRY_RUN:
             raise ValueError("HiperwallDryRunPlanner requires CCTV_APP_MODE=dry_run")
         self.settings = settings
+        self._rules = {rule.id: rule for rule in rules}
+        self._mappings = {
+            rule.id: mapping
+            for rule in rules
+            if (
+                mapping := mapping_from_rule(
+                    rule,
+                    default_display_seconds=settings.hiperwall_default_display_seconds,
+                )
+            )
+            is not None
+        }
 
     def plan(
         self,
@@ -52,6 +69,13 @@ class HiperwallDryRunPlanner:
                     "payload": event.payload,
                 },
             }
+            mapping = self._mappings.get(event.rule_id)
+            rule = self._rules.get(event.rule_id)
+            if mapping is not None:
+                request["target"] = mapping.target_request()
+                request["display_seconds"] = mapping.display_seconds
+            if rule is not None:
+                request["label"] = f"{rule.name} | {source_name} | {event.event_type}"
             result = {
                 "external_request_sent": False,
                 "reason": "dry_run",

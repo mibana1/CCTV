@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -65,6 +66,8 @@ class SnapshotInfo:
 class TestSessionSnapshot:
     id: str
     status: TestSessionStatus
+    camera_id: int
+    stream_path: str
     source_name: str
     sample_fps: float
     max_samples: int
@@ -91,7 +94,10 @@ class TestSessionSnapshot:
 class _MutableSession:
     id: str
     status: TestSessionStatus
+    camera_id: int
+    stream_path: str
     source_name: str
+    rtsp_url: str
     sample_fps: float
     max_samples: int
     save_snapshots: bool
@@ -129,6 +135,9 @@ class TestSessionManager:
     def start(
         self,
         *,
+        camera_id: int,
+        stream_path: str,
+        rtsp_url: str,
         sample_fps: float,
         max_samples: int,
         save_snapshots: bool,
@@ -148,7 +157,10 @@ class TestSessionManager:
             session = _MutableSession(
                 id=session_id,
                 status=TestSessionStatus.STARTING,
-                source_name=self.settings.rtsp_source_name,
+                camera_id=camera_id,
+                stream_path=stream_path,
+                source_name=stream_path,
+                rtsp_url=rtsp_url,
                 sample_fps=float(sample_fps),
                 max_samples=max_samples,
                 save_snapshots=save_snapshots,
@@ -163,7 +175,7 @@ class TestSessionManager:
             command = self._build_command(session)
             session_log_path = self.settings.log_path.parent / f"test-session-{session_id}.jsonl"
             session_log_path.parent.mkdir(parents=True, exist_ok=True)
-            environment = self._worker_environment(session_log_path)
+            environment = self._worker_environment(session, session_log_path)
             try:
                 process = subprocess.Popen(
                     command,
@@ -192,6 +204,8 @@ class TestSessionManager:
                 "session_started",
                 {
                     "status": session.status,
+                    "camera_id": session.camera_id,
+                    "stream_path": session.stream_path,
                     "source_name": session.source_name,
                     "sample_fps": session.sample_fps,
                     "max_samples": session.max_samples,
@@ -237,6 +251,27 @@ class TestSessionManager:
                 reverse=True,
             )
             return tuple(self._snapshot_locked(session) for session in sessions)
+
+    def delete(self, session_id: str) -> None:
+        """Delete one terminal dashboard session and its session-owned files."""
+        with self._lock:
+            session = self._session_locked(session_id)
+            if session.status not in TERMINAL_SESSION_STATUSES:
+                raise SessionConflictError("an active test session cannot be deleted")
+            snapshot_dir = session.snapshot_dir
+            log_path = self.settings.log_path.parent / f"test-session-{session_id}.jsonl"
+            del self._sessions[session_id]
+
+        snapshot_root = self.settings.snapshot_dir.expanduser().resolve()
+        if snapshot_dir.parent == snapshot_root and snapshot_dir.name == f"test-session-{session_id}":
+            shutil.rmtree(snapshot_dir, ignore_errors=True)
+        expected_log_parent = self.settings.log_path.parent.expanduser().resolve()
+        resolved_log_path = log_path.expanduser().resolve()
+        if (
+            resolved_log_path.parent == expected_log_parent
+            and resolved_log_path.name == f"test-session-{session_id}.jsonl"
+        ):
+            resolved_log_path.unlink(missing_ok=True)
 
     def events(self, session_id: str, *, after: int = 0) -> tuple[DashboardEvent, ...]:
         with self._lock:
@@ -323,7 +358,7 @@ class TestSessionManager:
             command.extend(["--snapshot-dir", str(session.snapshot_dir)])
         return command
 
-    def _worker_environment(self, log_path: Path) -> dict[str, str]:
+    def _worker_environment(self, session: _MutableSession, log_path: Path) -> dict[str, str]:
         environment = os.environ.copy()
         environment.update(
             {
@@ -366,8 +401,8 @@ class TestSessionManager:
                 "CCTV_FACE_MATCH_UNKNOWN_RETRY_SECONDS": str(
                     self.settings.face_match_unknown_retry_seconds
                 ),
-                "CCTV_RTSP_WORKER_URL": self.settings.rtsp_worker_url,
-                "CCTV_RTSP_SOURCE_NAME": self.settings.rtsp_source_name,
+                "CCTV_RTSP_WORKER_URL": session.rtsp_url,
+                "CCTV_RTSP_SOURCE_NAME": session.stream_path,
                 "CCTV_LOG_LEVEL": self.settings.log_level,
                 "CCTV_LOG_PATH": str(log_path),
             }
@@ -543,6 +578,8 @@ class TestSessionManager:
         return TestSessionSnapshot(
             id=session.id,
             status=session.status,
+            camera_id=session.camera_id,
+            stream_path=session.stream_path,
             source_name=session.source_name,
             sample_fps=session.sample_fps,
             max_samples=session.max_samples,
@@ -718,6 +755,8 @@ def _public_final_summary(record: dict[str, Any]) -> dict[str, Any]:
 
 def _face_event_message(record: dict[str, Any]) -> str:
     status = str(record.get("match_status", "unknown"))
+    if record.get("rejection_reason") == "no_candidates":
+        return f"얼굴 판정: {status} · 등록 후보 없음"
     similarity = record.get("best_similarity")
     label = record.get("external_id") or record.get("display_name") or "unknown"
     if isinstance(similarity, (int, float)):

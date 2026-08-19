@@ -13,6 +13,7 @@ rtspTransports: [tcp]
 rtmp: false
 hls: true
 hlsAddress: :8888
+hlsAlwaysRemux: true
 webrtc: false
 srt: false
 moq: false

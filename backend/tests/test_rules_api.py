@@ -41,6 +41,26 @@ def test_rules_api_manages_definitions_and_queries_events(tmp_path: Path) -> Non
         )
         detail = client.get(f"/rules/{rule_id}")
         disabled = client.patch(f"/rules/{rule_id}/enabled", json={"enabled": False})
+        mapped = client.put(
+            f"/rules/{rule_id}/hiperwall",
+            json={
+                "content_name": "Entrance camera",
+                "zone_id": "Alert Zone",
+                "layout": {
+                    "mode": "percent",
+                    "x": 0,
+                    "y": 0,
+                    "width": 50,
+                    "height": 100,
+                },
+                "display_seconds": 20,
+            },
+        )
+        invalid_mapping = client.put(
+            f"/rules/{rule_id}/hiperwall",
+            json={"content_name": "Camera", "content_uuid": "duplicate"},
+        )
+        cleared_mapping = client.delete(f"/rules/{rule_id}/hiperwall")
 
         repository = DetectionRepository(database_path)
         run_id = repository.create_analysis_run(
@@ -101,12 +121,24 @@ def test_rules_api_manages_definitions_and_queries_events(tmp_path: Path) -> Non
         assert detail.json()["name"] == body["name"]
         assert disabled.status_code == 200
         assert disabled.json()["enabled"] is False
+        assert mapped.status_code == 200
+        assert mapped.json()["parameters"]["hiperwall"]["zone_id"] == "Alert Zone"
+        assert invalid_mapping.status_code == 422
+        assert "hiperwall" not in cleared_mapping.json()["parameters"]
         assert events.status_code == 200
         assert events.json()["total"] == 1
         assert events.json()["items"][0]["payload"]["point"] == [0.5, 0.6]
 
         assert client.get("/rules/missing").status_code == 404
         assert client.patch("/rules/missing/enabled", json={"enabled": True}).status_code == 404
+        assert (
+            client.put(
+                "/rules/missing/hiperwall",
+                json={"content_name": "Camera"},
+            ).status_code
+            == 404
+        )
+        assert client.delete("/rules/missing/hiperwall").status_code == 404
         assert client.get("/rule-events", params={"limit": 101}).status_code == 422
         assert (
             client.get(

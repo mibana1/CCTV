@@ -21,9 +21,26 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 13
-    assert first.applied_migrations == (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13)
-    assert second.schema_version == 13
+    assert first.schema_version == 16
+    assert first.applied_migrations == (
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+    )
+    assert second.schema_version == 16
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -64,6 +81,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 11, "name": "camera_stream_paths"},
             {"version": 12, "name": "camera_rtsp_sources"},
             {"version": 13, "name": "person_instances"},
+            {"version": 14, "name": "hiperwall_live_actions"},
+            {"version": 15, "name": "camera_always_connected"},
+            {"version": 16, "name": "candidate_free_face_events"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -99,7 +119,7 @@ def test_connect_database_returns_rows_by_column_name(tmp_path: Path) -> None:
     assert dict(row) == {"id": 1, "name": "Test camera", "enabled": 1}
 
 
-def test_initialize_database_upgrades_schema_version_twelve_to_person_instances(
+def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
     tmp_path: Path,
 ) -> None:
     database_path = tmp_path / "existing.db"
@@ -113,21 +133,55 @@ def test_initialize_database_upgrades_schema_version_twelve_to_person_instances(
             )
             """
         )
-        for migration in MIGRATIONS[:-1]:
+        for migration in MIGRATIONS[:-2]:
             migration.apply(connection)
             connection.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
                 (migration.version, migration.name),
             )
         connection.execute(
-            "INSERT INTO cameras (name, stream_path) VALUES ('Existing camera', 'camera')"
+            """
+            INSERT INTO cameras (name, stream_path, source_on_demand)
+            VALUES ('Existing camera', 'camera', 1)
+            """
         )
-        connection.execute("PRAGMA user_version = 12")
+        connection.execute(
+            """
+            INSERT INTO analysis_runs (
+                id, source_type, source_name, model_name, model_sha256, device,
+                input_size, confidence_threshold, nms_threshold, sample_fps,
+                status, started_at, completed_at
+            ) VALUES ('legacy-run', 'rtsp', 'camera', 'model.onnx', ?, 'cpu',
+                640, 0.25, 0.45, 2, 'completed', '2026-08-18T00:00:00Z',
+                '2026-08-18T00:01:00Z')
+            """,
+            ("a" * 64,),
+        )
+        connection.execute(
+            """
+            INSERT INTO face_match_events (
+                analysis_run_id, source_index, sample_index,
+                source_timestamp_seconds, face_index, track_id,
+                face_x, face_y, face_width, face_height,
+                detection_confidence, match_status, rejection_reason,
+                identity_id, external_id, display_name,
+                best_candidate_identity_id, best_candidate_external_id,
+                best_similarity, second_best_similarity,
+                similarity_threshold, minimum_margin
+            ) VALUES (
+                'legacy-run', 1, 1, 0.5, 0, NULL,
+                10, 20, 30, 40, 0.9, 'unknown', 'below_threshold',
+                NULL, NULL, NULL, 'legacy-candidate', NULL,
+                0.2, NULL, 0.45, 0.05
+            )
+            """
+        )
+        connection.execute("PRAGMA user_version = 14")
 
     state = initialize_database(database_path)
 
-    assert state.schema_version == 13
-    assert state.applied_migrations == (13,)
+    assert state.schema_version == 16
+    assert state.applied_migrations == (15, 16)
     with closing(connect_database(database_path)) as connection:
         camera = connection.execute(
             """
@@ -150,12 +204,18 @@ def test_initialize_database_upgrades_schema_version_twelve_to_person_instances(
             )
         }
         foreign_key_errors = connection.execute("PRAGMA foreign_key_check").fetchall()
+        legacy_face_event = connection.execute(
+            """
+            SELECT rejection_reason, best_candidate_identity_id, best_similarity
+            FROM face_match_events WHERE analysis_run_id = 'legacy-run'
+            """
+        ).fetchone()
 
     assert dict(camera) == {
         "name": "Existing camera",
         "stream_path": "camera",
         "rtsp_source_ciphertext": None,
-        "source_on_demand": 1,
+        "source_on_demand": 0,
         "provisioning_status": "external",
     }
     assert tables == {
@@ -166,6 +226,11 @@ def test_initialize_database_upgrades_schema_version_twelve_to_person_instances(
         "track_identity_links",
     }
     assert foreign_key_errors == []
+    assert dict(legacy_face_event) == {
+        "rejection_reason": "below_threshold",
+        "best_candidate_identity_id": "legacy-candidate",
+        "best_similarity": 0.2,
+    }
 
 
 def test_check_database_health_reads_current_database_state(tmp_path: Path) -> None:
@@ -174,7 +239,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 13
+    assert health.schema_version == 16
     assert health.journal_mode == "wal"
 
 

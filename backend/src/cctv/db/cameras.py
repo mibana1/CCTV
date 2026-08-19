@@ -82,7 +82,7 @@ class CameraRepository:
         enabled: bool = True,
         rtsp_endpoint: str | None = None,
         rtsp_source_ciphertext: str | None = None,
-        source_on_demand: bool = True,
+        source_on_demand: bool = False,
         provisioning_status: CameraProvisioningStatus = CameraProvisioningStatus.EXTERNAL,
     ) -> CameraRecord:
         with closing(connect_database(self.database_path)) as connection, connection:

@@ -156,6 +156,40 @@ class RuleRepository:
             raise RuntimeError("updated rule could not be read")
         return _rule_from_row(row)
 
+    def set_rule_hiperwall_mapping(
+        self,
+        rule_id: str,
+        mapping: dict[str, Any] | None,
+    ) -> RuleRecord:
+        """Add, replace, or remove the Hiperwall mapping inside rule parameters."""
+        with closing(connect_database(self.database_path)) as connection, connection:
+            row = connection.execute(
+                "SELECT parameters_json FROM rules WHERE id = ?",
+                (rule_id,),
+            ).fetchone()
+            if row is None:
+                raise LookupError(f"rule does not exist: {rule_id}")
+            parameters = _json_from_text(str(row["parameters_json"]))
+            if mapping is None:
+                parameters.pop("hiperwall", None)
+            else:
+                parameters["hiperwall"] = mapping
+            connection.execute(
+                """
+                UPDATE rules
+                SET parameters_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (_json_object(parameters, "parameters"), rule_id),
+            )
+            updated = connection.execute(
+                "SELECT * FROM rules WHERE id = ?",
+                (rule_id,),
+            ).fetchone()
+        if updated is None:  # pragma: no cover - protected by the transaction
+            raise RuntimeError("updated rule could not be read")
+        return _rule_from_row(updated)
+
     def list_rules(
         self,
         *,

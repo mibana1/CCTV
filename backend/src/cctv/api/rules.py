@@ -15,6 +15,7 @@ from cctv.db import (
     RuleRecord,
     RuleRepository,
 )
+from cctv.hiperwall import HiperwallMappingError, validate_rule_hiperwall_mapping
 from cctv.rules import RuleConfigurationError, RuleDefinition, RuleEngine
 
 router = APIRouter(tags=["rules"])
@@ -34,6 +35,17 @@ class RuleCreateRequest(BaseModel):
 
 class RuleEnabledRequest(BaseModel):
     enabled: bool
+
+
+class HiperwallMappingRequest(BaseModel):
+    """Rule-specific Hiperwall content, Zone, layout, and point-event duration."""
+
+    enabled: bool = True
+    content_name: str | None = Field(default=None, min_length=1, max_length=512)
+    content_uuid: str | None = Field(default=None, min_length=1, max_length=512)
+    zone_id: str | None = Field(default=None, min_length=1, max_length=512)
+    layout: dict[str, Any] | None = None
+    display_seconds: int | None = Field(default=None, ge=1, le=86_400)
 
 
 class RuleResponse(BaseModel):
@@ -116,7 +128,13 @@ def create_rule(request: Request, body: RuleCreateRequest) -> RuleResponse:
     )
     try:
         RuleEngine((definition,))
-    except RuleConfigurationError as error:
+        validate_rule_hiperwall_mapping(
+            definition,
+            default_display_seconds=(
+                request.app.state.settings.hiperwall_default_display_seconds
+            ),
+        )
+    except (RuleConfigurationError, HiperwallMappingError) as error:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
@@ -195,7 +213,13 @@ def set_rule_enabled(
     if body.enabled:
         try:
             RuleEngine((current.to_definition(),))
-        except RuleConfigurationError as error:
+            validate_rule_hiperwall_mapping(
+                current.to_definition(),
+                default_display_seconds=(
+                    request.app.state.settings.hiperwall_default_display_seconds
+                ),
+            )
+        except (RuleConfigurationError, HiperwallMappingError) as error:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=str(error),
@@ -205,6 +229,65 @@ def set_rule_enabled(
     except LookupError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="rule not found"
+        ) from error
+    return _rule_response(record)
+
+
+@router.put(
+    "/rules/{rule_id}/hiperwall",
+    response_model=RuleResponse,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Rule not found"}},
+)
+def set_rule_hiperwall_mapping(
+    request: Request,
+    rule_id: str,
+    body: HiperwallMappingRequest,
+) -> RuleResponse:
+    """Validate and replace the display mapping used when a rule emits an event."""
+    repository = _repository(request)
+    current = repository.get_rule(rule_id)
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="rule not found")
+    mapping = body.model_dump(exclude_none=True)
+    parameters = {**current.parameters, "hiperwall": mapping}
+    definition = RuleDefinition(
+        id=current.id,
+        name=current.name,
+        source_name=current.source_name,
+        rule_type=current.rule_type,
+        class_name=current.class_name,
+        geometry=current.geometry,
+        parameters=parameters,
+        enabled=current.enabled,
+    )
+    try:
+        validate_rule_hiperwall_mapping(
+            definition,
+            default_display_seconds=(
+                request.app.state.settings.hiperwall_default_display_seconds
+            ),
+        )
+    except HiperwallMappingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    return _rule_response(repository.set_rule_hiperwall_mapping(rule_id, mapping))
+
+
+@router.delete(
+    "/rules/{rule_id}/hiperwall",
+    response_model=RuleResponse,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Rule not found"}},
+)
+def clear_rule_hiperwall_mapping(request: Request, rule_id: str) -> RuleResponse:
+    """Disable Hiperwall output for a rule without deleting the detection rule."""
+    try:
+        record = _repository(request).set_rule_hiperwall_mapping(rule_id, None)
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="rule not found",
         ) from error
     return _rule_response(record)
 

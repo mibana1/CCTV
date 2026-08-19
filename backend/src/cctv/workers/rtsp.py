@@ -24,7 +24,7 @@ from cctv.db import (
     RuleRepository,
     initialize_database,
 )
-from cctv.hiperwall import HiperwallDryRunPlanner
+from cctv.hiperwall import HiperwallDryRunPlanner, HiperwallLivePlanner
 from cctv.identity import (
     FaceMatchingConsumer,
     create_resolving_face_observation_sink,
@@ -340,8 +340,9 @@ def run(argv: Sequence[str] | None = None) -> None:
         rule_engine: RuleEngine | None = None
         emitted_rule_events = 0
         filtered_out_detections = 0
-        hiperwall_planner: HiperwallDryRunPlanner | None = None
+        hiperwall_planner: HiperwallDryRunPlanner | HiperwallLivePlanner | None = None
         simulated_hiperwall_actions = 0
+        queued_hiperwall_actions = 0
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
         face_matching_consumer: FaceMatchingConsumer | None = None
@@ -402,17 +403,10 @@ def run(argv: Sequence[str] | None = None) -> None:
                             "supported_rule_types": rule_engine.supported_rule_types,
                         },
                     )
-                    if settings.hiperwall_dry_run_enabled:
-                        if settings.app_mode is AppMode.DRY_RUN:
-                            hiperwall_planner = HiperwallDryRunPlanner(settings)
-                        else:
-                            logger.warning(
-                                "Hiperwall DRY RUN planning is unavailable in LIVE mode",
-                                extra={
-                                    "event": "hiperwall_dry_run_unavailable",
-                                    "app_mode": settings.app_mode,
-                                },
-                            )
+                    if settings.app_mode is AppMode.LIVE:
+                        hiperwall_planner = HiperwallLivePlanner(settings, definitions)
+                    elif settings.hiperwall_dry_run_enabled:
+                        hiperwall_planner = HiperwallDryRunPlanner(settings, definitions)
             if settings.rules_enabled and rule_engine is None:
                 logger.warning(
                     "Rule engine disabled for this run because tracking or persistence is unavailable",
@@ -427,6 +421,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                 nonlocal emitted_rule_events
                 nonlocal filtered_out_detections
                 nonlocal simulated_hiperwall_actions
+                nonlocal queued_hiperwall_actions
 
                 raw_result = detector.analyze(frame)
                 result = filter_detections_by_class(
@@ -455,7 +450,10 @@ def run(argv: Sequence[str] | None = None) -> None:
                     if hiperwall_planner is not None and analysis_run is not None
                     else ()
                 )
-                simulated_hiperwall_actions += len(display_actions)
+                if settings.app_mode is AppMode.LIVE:
+                    queued_hiperwall_actions += len(display_actions)
+                else:
+                    simulated_hiperwall_actions += len(display_actions)
                 if repository is not None and analysis_run is not None:
                     repository.save_frame(
                         analysis_run.id,
@@ -486,9 +484,9 @@ def run(argv: Sequence[str] | None = None) -> None:
                 minimum_margin=arguments.face_match_margin,
                 observation_sink=observation_sink,
             )
-            if tracker is None:
+            if face_matching_consumer is not None and tracker is None:
                 consumers.append(face_matching_consumer)
-            else:
+            elif face_matching_consumer is not None:
                 logger.info(
                     "Track-aware face matching cache enabled",
                     extra={
@@ -601,9 +599,13 @@ def run(argv: Sequence[str] | None = None) -> None:
                 "emitted_event_count": emitted_rule_events,
             }
             output["analysis"]["hiperwall"] = {
+                "mode": settings.app_mode,
                 "dry_run_configured": settings.hiperwall_dry_run_enabled,
-                "dry_run_enabled": hiperwall_planner is not None,
+                "dry_run_enabled": (
+                    settings.app_mode is AppMode.DRY_RUN and hiperwall_planner is not None
+                ),
                 "simulated_action_count": simulated_hiperwall_actions,
+                "queued_live_action_count": queued_hiperwall_actions,
                 "external_request_sent": False,
             }
         if face_matching_consumer is not None:

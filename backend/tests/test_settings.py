@@ -75,6 +75,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_RTSP_MAX_RETRIES", "7")
     monkeypatch.setenv("CCTV_RTSP_MAX_SAMPLES", "9")
     monkeypatch.setenv("HIPERWALL_AUTH_MODE", "TOKEN")
+    monkeypatch.setenv("HIPERWALL_USER", "cctv_bridge")
     monkeypatch.setenv("HIPERWALL_TOKEN", "test-token")
     monkeypatch.setenv("HIPERWALL_BASE_URL", "http://hiperwall-host:8000")
 
@@ -140,6 +141,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.rtsp_max_retries == 7
     assert settings.rtsp_max_samples == 9
     assert settings.hiperwall_auth_mode == "token"
+    assert settings.hiperwall_user == "cctv_bridge"
     assert settings.hiperwall_token is not None
     assert settings.hiperwall_token.get_secret_value() == "test-token"
 
@@ -289,7 +291,20 @@ def test_settings_live_token_mode_requires_token() -> None:
             app_mode="live",
             hiperwall_base_url="http://hiperwall-host:8000",
             hiperwall_auth_mode="token",
+            hiperwall_user="cctv_bridge",
             hiperwall_token=None,
+        )
+
+
+def test_settings_live_token_mode_requires_user() -> None:
+    with pytest.raises(ValidationError, match="HIPERWALL_USER is required"):
+        Settings(
+            _env_file=None,
+            app_mode="live",
+            hiperwall_base_url="http://hiperwall-host:8000",
+            hiperwall_auth_mode="token",
+            hiperwall_user="",
+            hiperwall_token="test-token",
         )
 
 

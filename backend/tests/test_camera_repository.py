@@ -27,6 +27,7 @@ def test_camera_repository_crud_and_filters(tmp_path: Path) -> None:
     )
 
     assert repository.get_camera(first.id) == first
+    assert first.source_on_demand is False
     assert repository.list_cameras().total == 2
     assert repository.list_cameras(enabled=True).items == (first,)
     assert repository.list_cameras(enabled=False).items == (second,)
