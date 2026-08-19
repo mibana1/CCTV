@@ -105,6 +105,46 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 Hiperwall에서 원본 영상을 읽을 주소는
 `rtsp://<Docker 호스트 IP>:8554/camera`입니다.
 
+### 로컬 RTSP 테스트 대시보드
+
+터미널의 JSON 로그를 직접 읽지 않고 RTSP 테스트를 시작·중지하고 진행률,
+CPU·메모리, 얼굴 판정, 실행 요약과 스냅샷을 확인할 수 있습니다. 대시보드는
+`CCTV_TEST_DASHBOARD_ENABLED=true`, 개발 환경, `dry_run`, localhost 요청일 때만
+접근할 수 있습니다.
+
+```bash
+docker compose up -d --build mediamtx backend
+```
+
+브라우저에서 `http://127.0.0.1:18000/test-dashboard`를 엽니다. 카메라 이름,
+위치, RTSP 주소와 계정을 입력하면 고유 MediaMTX 경로가 자동 생성되고 같은
+화면에서 실시간 영상을 확인할 수 있습니다. 플레이어는 로컬 전용 HLS 포트
+`http://127.0.0.1:18888/<자동 경로>`를 사용합니다. API 응답에는 계정을 포함하지
+않고, SQLite의 원본 RTSP 주소는 Fernet으로 암호화합니다. 암호화 키는 기본적으로
+Git에서 제외된 `runtime/secrets/camera_credentials.key`에 생성되므로 DB와 함께
+백업해야 합니다.
+한 번에 하나의
+테스트 세션만 실행되며, 시작 API는 Backend 컨테이너 안에 별도 RTSP 워커
+프로세스를 생성합니다. Docker 소켓이나 카메라 인증정보를 브라우저에 노출하지
+않습니다. 테스트 종료 시 얼굴 비교 결과는 `face_match_events`에 저장되고,
+스냅샷은 `runtime/snapshots/test-session-<ID>`에 남습니다.
+
+```text
+POST /test-sessions
+POST /test-sessions/{session_id}/stop
+GET  /test-sessions/{session_id}
+GET  /test-sessions/{session_id}/events
+GET  /test-sessions/{session_id}/snapshots
+GET  /face-match-events?analysis_run_id={analysis_run_id}
+GET  /analysis-runs/{analysis_run_id}/face-match-summary
+POST /test-cameras
+GET  /test-cameras
+PATCH /test-cameras/{camera_id}
+DELETE /test-cameras/{camera_id}
+POST /test-cameras/{camera_id}/sync
+GET  /test-cameras/{camera_id}/status
+```
+
 객체 분석기는 `CCTV_DETECTOR_TYPE`으로 선택하며 기본값은 `yolo_onnx`입니다.
 공통 `ObjectDetector` 인터페이스를 구현해 등록하면 워커·추적·규칙·DB 코드를
 바꾸지 않고 다른 객체 검출 모델로 교체할 수 있습니다. 기존

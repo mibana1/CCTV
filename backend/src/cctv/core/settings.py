@@ -93,6 +93,14 @@ class Settings(BaseSettings):
     face_match_similarity_threshold: float = Field(default=0.45, gt=0, le=1)
     face_match_minimum_margin: float = Field(default=0.05, ge=0, le=1)
     face_match_unknown_retry_seconds: float = Field(default=2.0, gt=0, le=300)
+    test_dashboard_enabled: bool = False
+    media_hls_base_url: str = "http://127.0.0.1:18888"
+    mediamtx_dynamic_paths_enabled: bool = False
+    mediamtx_api_url: str = "http://127.0.0.1:9997"
+    mediamtx_api_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    mediamtx_reconcile_interval_seconds: float = Field(default=10.0, ge=2, le=300)
+    camera_credential_key: SecretStr | None = None
+    camera_credential_key_path: Path = Path("runtime/secrets/camera_credentials.key")
     model_classes_path: Path | None = None
     local_video_path: Path | None = None
     rtsp_input_url: str | None = None
@@ -160,13 +168,20 @@ class Settings(BaseSettings):
         "identity_photo_dir",
         "face_detection_model_path",
         "face_embedding_model_path",
+        "camera_credential_key_path",
     )
     @classmethod
     def resolve_project_path(cls, value: Path) -> Path:
         """Resolve relative runtime paths from the repository root."""
         return value if value.is_absolute() else (PROJECT_ROOT / value).resolve()
 
-    @field_validator("local_video_path", "model_classes_path", "rtsp_input_url", mode="before")
+    @field_validator(
+        "local_video_path",
+        "model_classes_path",
+        "rtsp_input_url",
+        "camera_credential_key",
+        mode="before",
+    )
     @classmethod
     def normalize_optional_value(cls, value: object) -> object:
         """Treat empty optional environment variables as unset."""
@@ -190,6 +205,25 @@ class Settings(BaseSettings):
         if parsed.scheme.casefold() not in {"rtsp", "rtsps"} or not parsed.hostname:
             raise ValueError("RTSP URL must use rtsp:// or rtsps:// and include a host")
         return value
+
+    @field_validator("media_hls_base_url", "mediamtx_api_url")
+    @classmethod
+    def validate_mediamtx_http_url(cls, value: str) -> str:
+        """Require credential-free HTTP endpoints for MediaMTX services."""
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if (
+            parsed.scheme.casefold() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "MediaMTX URL must be a credential-free http(s) URL without query or fragment"
+            )
+        return normalized
 
     @field_validator("rtsp_source_name")
     @classmethod

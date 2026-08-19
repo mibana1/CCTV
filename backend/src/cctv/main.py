@@ -9,14 +9,26 @@ import uvicorn
 from fastapi import FastAPI, Request
 
 from cctv.api.router import router
+from cctv.cameras import (
+    CameraCredentialCipher,
+    CameraManagementService,
+    CameraManager,
+    CameraReconciler,
+    MediaMtxClient,
+)
 from cctv.core.logging import configure_logging, shutdown_logging
 from cctv.core.settings import Settings, get_settings
-from cctv.db import initialize_database
+from cctv.dashboard import TestSessionManager
+from cctv.db import CameraRepository, initialize_database
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    test_session_manager: TestSessionManager | None = None,
+    camera_manager: CameraManager | None = None,
+) -> FastAPI:
     """Build an application with validated settings and database startup."""
     application_settings = settings or get_settings()
 
@@ -55,6 +67,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         application.state.settings = application_settings
         application.state.database = database_state
+        application.state.test_session_manager = (
+            test_session_manager or TestSessionManager(application_settings)
+        )
+        owned_camera_manager: CameraManagementService | None = None
+        camera_reconciler: CameraReconciler | None = None
+        if camera_manager is not None:
+            application.state.camera_manager = camera_manager
+        elif application_settings.mediamtx_dynamic_paths_enabled:
+            cipher = CameraCredentialCipher.from_settings(
+                configured_key=application_settings.camera_credential_key,
+                key_path=application_settings.camera_credential_key_path,
+            )
+            owned_camera_manager = CameraManagementService(
+                CameraRepository(database_state.path),
+                cipher,
+                MediaMtxClient(
+                    application_settings.mediamtx_api_url,
+                    timeout_seconds=application_settings.mediamtx_api_timeout_seconds,
+                ),
+            )
+            application.state.camera_manager = owned_camera_manager
+            camera_reconciler = CameraReconciler(
+                owned_camera_manager,
+                interval_seconds=application_settings.mediamtx_reconcile_interval_seconds,
+            )
+            camera_reconciler.start()
+        else:
+            application.state.camera_manager = None
         logger.info(
             "Application startup complete",
             extra={
@@ -65,6 +105,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             yield
         finally:
+            if camera_reconciler is not None:
+                camera_reconciler.stop()
+            if owned_camera_manager is not None:
+                owned_camera_manager.close()
+            application.state.test_session_manager.shutdown()
             logger.info(
                 "Application shutdown complete",
                 extra={"event": "application_stopped"},

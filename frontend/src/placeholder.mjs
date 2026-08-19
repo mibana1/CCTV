@@ -10,7 +10,8 @@ const page = `<!doctype html>
     <main>
       <h1>CCTV Test</h1>
       <p>Frontend 기술 선택 전 임시 화면입니다.</p>
-      <p>Backend health: <a href="http://127.0.0.1:8000/health">/health</a></p>
+      <p>Backend health: <a href="http://127.0.0.1:18000/health">/health</a></p>
+      <p>RTSP test: <a href="http://127.0.0.1:18000/test-dashboard">테스트 대시보드</a></p>
     </main>
   </body>
 </html>`;
@@ -21,4 +22,3 @@ createServer((_request, response) => {
 }).listen(port, host, () => {
   console.log(`CCTV frontend placeholder listening on http://${host}:${port}`);
 });
-

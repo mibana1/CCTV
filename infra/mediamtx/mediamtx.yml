@@ -4,11 +4,15 @@ logDestinations: [stdout]
 readTimeout: 10s
 writeTimeout: 10s
 
+api: true
+apiAddress: 127.0.0.1:9997
+
 rtsp: true
 rtspAddress: :8554
 rtspTransports: [tcp]
 rtmp: false
-hls: false
+hls: true
+hlsAddress: :8888
 webrtc: false
 srt: false
 moq: false

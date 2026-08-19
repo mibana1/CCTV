@@ -13,5 +13,8 @@ analysis-run, analyzed-frame, and detection tables with query indexes. Version
 historical detection rows. Version 4 adds aggregate `tracks` and normalized
 `track_observations`, including a backfill from existing tracked detections. Add
 Version 5 adds the tracker-owned active state and a class/time/state query index.
-Add later domain tables as new versioned migration modules; never edit a
-migration that has been deployed.
+Version 11 adds a unique MediaMTX stream path to camera registrations for local
+browser previews. Version 12 adds an encrypted RTSP source column, a redacted
+endpoint, on-demand behavior, and MediaMTX provisioning state. Add later domain
+tables as new versioned migration modules; never edit a migration that has been
+deployed.

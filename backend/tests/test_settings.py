@@ -263,6 +263,19 @@ def test_settings_reject_invalid_rtsp_url() -> None:
         Settings(_env_file=None, rtsp_worker_url="http://camera/stream")
 
 
+@pytest.mark.parametrize(
+    "value",
+    (
+        "rtsp://127.0.0.1:8554",
+        "http://user:password@127.0.0.1:18888",
+        "http://127.0.0.1:18888?token=secret",
+    ),
+)
+def test_settings_reject_invalid_media_hls_base_url(value: str) -> None:
+    with pytest.raises(ValidationError, match="MediaMTX URL"):
+        Settings(_env_file=None, media_hls_base_url=value)
+
+
 def test_settings_reject_reconnect_max_below_initial() -> None:
     with pytest.raises(ValidationError, match="RECONNECT_MAX_SECONDS"):
         Settings(

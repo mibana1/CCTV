@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite, sqrt
@@ -210,6 +210,7 @@ class FaceMatchingConsumer:
         *,
         source_name: str,
         unknown_retry_seconds: float = 2.0,
+        observation_sink: Callable[[FaceMatchObservation, int | None], None] | None = None,
     ) -> None:
         if not isfinite(unknown_retry_seconds) or unknown_retry_seconds <= 0:
             raise ValueError("unknown_retry_seconds must be a finite number greater than zero")
@@ -217,6 +218,7 @@ class FaceMatchingConsumer:
         self.matcher = matcher
         self.source_name = source_name
         self.unknown_retry_seconds = float(unknown_retry_seconds)
+        self.observation_sink = observation_sink
         self.processed_frames = 0
         self.frames_with_faces = 0
         self.detected_faces = 0
@@ -421,6 +423,8 @@ class FaceMatchingConsumer:
                     "minimum_margin": decision.minimum_margin,
                 },
             )
+            if self.observation_sink is not None:
+                self.observation_sink(observation, track_id)
         return tuple(observations)
 
     def _log_cache_hit(

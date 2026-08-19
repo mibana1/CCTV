@@ -1,0 +1,675 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CCTV RTSP 테스트 대시보드</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: #0b1118;
+        --surface: #121b25;
+        --surface-2: #182431;
+        --line: #29394a;
+        --text: #edf4fa;
+        --muted: #8fa4b8;
+        --accent: #32d6a0;
+        --accent-2: #49a8ff;
+        --warning: #ffbd59;
+        --danger: #ff6b72;
+        --radius: 14px;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at top right, rgba(73, 168, 255, .12), transparent 32rem),
+          var(--background);
+        color: var(--text);
+        font-family: Inter, Pretendard, "Noto Sans KR", system-ui, sans-serif;
+      }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+      .shell { width: min(1440px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 60px; }
+      header { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+      h1 { margin: 0; font-size: clamp(1.65rem, 3vw, 2.35rem); letter-spacing: -.04em; }
+      h2 { margin: 0 0 16px; font-size: 1.05rem; }
+      p { color: var(--muted); }
+      .eyebrow { color: var(--accent); margin: 0 0 8px; font-size: .78rem; font-weight: 800; letter-spacing: .12em; }
+      .health { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .88rem; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 14px currentColor; }
+      .dot.ok { background: var(--accent); }
+      .grid { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 20px; margin-top: 26px; }
+      .camera-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, .8fr); gap: 20px; margin-top: 26px; }
+      .stack { display: grid; gap: 20px; align-content: start; }
+      .panel { background: rgba(18, 27, 37, .94); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: 0 18px 55px rgba(0, 0, 0, .18); }
+      .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      label { display: grid; gap: 7px; color: var(--muted); font-size: .82rem; }
+      input[type="number"], input[type="text"], input[type="url"], input[type="password"] { width: 100%; background: #0c141d; border: 1px solid var(--line); border-radius: 9px; color: var(--text); padding: 10px 12px; }
+      .checks { display: grid; gap: 9px; margin: 16px 0; }
+      .checks label { display: flex; align-items: center; gap: 9px; }
+      .actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .primary, .secondary { border: 0; border-radius: 10px; padding: 11px 14px; font-weight: 800; }
+      .primary { color: #04120e; background: var(--accent); }
+      .secondary { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+      button:disabled { cursor: not-allowed; opacity: .42; }
+      .status-line { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
+      .status-badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 6px 10px; color: var(--accent-2); background: rgba(73, 168, 255, .12); font-size: .78rem; font-weight: 800; }
+      .status-badge.completed { color: var(--accent); background: rgba(50, 214, 160, .12); }
+      .status-badge.failed { color: var(--danger); background: rgba(255, 107, 114, .12); }
+      .progress { height: 9px; overflow: hidden; border-radius: 999px; background: #091018; margin: 16px 0 10px; }
+      .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, var(--accent-2), var(--accent)); transition: width .3s ease; }
+      .progress-label { display: flex; justify-content: space-between; color: var(--muted); font-size: .78rem; }
+      .metrics { display: grid; grid-template-columns: repeat(4, minmax(110px, 1fr)); gap: 12px; margin-top: 18px; }
+      .metric { min-height: 88px; padding: 13px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 11px; }
+      .metric span { color: var(--muted); font-size: .75rem; }
+      .metric strong { display: block; margin-top: 8px; font-size: 1.35rem; letter-spacing: -.03em; }
+      .message { min-height: 22px; margin: 14px 0 0; color: var(--muted); font-size: .86rem; }
+      .camera-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 14px; }
+      .camera-heading h2 { margin-bottom: 4px; }
+      .camera-heading small, .hint { color: var(--muted); font-size: .76rem; line-height: 1.5; }
+      .player { position: relative; overflow: hidden; aspect-ratio: 16 / 9; border: 1px solid var(--line); border-radius: 12px; background: #05090d; }
+      .player iframe { display: block; width: 100%; height: 100%; border: 0; background: #05090d; }
+      .player-empty { position: absolute; inset: 0; display: grid; place-items: center; padding: 24px; color: var(--muted); text-align: center; background: #05090d; }
+      .player-empty[hidden] { display: none; }
+      .camera-list { display: grid; gap: 8px; margin-top: 14px; max-height: 250px; overflow: auto; }
+      .camera-item { display: grid; grid-template-columns: 1fr auto; gap: 9px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+      .camera-select { display: grid; gap: 3px; padding: 0; color: var(--text); background: transparent; border: 0; text-align: left; }
+      .camera-select small { color: var(--muted); }
+      .camera-item.selected { border-color: var(--accent-2); box-shadow: inset 0 0 0 1px rgba(73, 168, 255, .2); }
+      .camera-item.disabled { opacity: .58; }
+      .icon-actions { display: flex; align-items: center; gap: 6px; }
+      .icon-button { border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; color: var(--muted); background: #0c141d; font-size: .75rem; }
+      .icon-button.danger { color: var(--danger); }
+      .table-wrap { overflow: auto; max-height: 390px; }
+      table { width: 100%; border-collapse: collapse; font-size: .83rem; }
+      th { position: sticky; top: 0; z-index: 1; color: var(--muted); background: var(--surface); text-align: left; font-weight: 650; }
+      th, td { padding: 10px 9px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      .matched { color: var(--accent); font-weight: 800; }
+      .unknown { color: var(--warning); font-weight: 800; }
+      .thumb-button { color: var(--accent-2); background: transparent; border: 0; padding: 0; }
+      .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; max-height: 520px; overflow: auto; }
+      .shot { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: #091018; }
+      .shot img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+      .shot figcaption { padding: 8px 10px; color: var(--muted); font-size: .72rem; }
+      .history { display: grid; gap: 8px; max-height: 250px; overflow: auto; }
+      .history button { width: 100%; display: flex; justify-content: space-between; gap: 12px; padding: 10px; color: var(--text); background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px; text-align: left; }
+      .history small { color: var(--muted); }
+      .events { display: grid; gap: 7px; max-height: 220px; overflow: auto; color: var(--muted); font-size: .78rem; }
+      .event { padding-left: 10px; border-left: 2px solid var(--line); }
+      .empty { color: var(--muted); text-align: center; padding: 28px 10px; }
+      dialog { width: min(1050px, calc(100% - 30px)); padding: 0; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--text); }
+      dialog::backdrop { background: rgba(0, 0, 0, .78); }
+      dialog img { display: block; width: 100%; max-height: 82vh; object-fit: contain; }
+      dialog button { position: absolute; top: 12px; right: 12px; border: 0; border-radius: 999px; padding: 8px 12px; color: var(--text); background: rgba(0, 0, 0, .7); }
+      @media (max-width: 980px) {
+        .grid, .camera-grid { grid-template-columns: 1fr; }
+        .metrics { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (max-width: 560px) {
+        .shell { width: min(100% - 20px, 1440px); padding-top: 18px; }
+        header { display: block; }
+        .health { margin-top: 14px; }
+        .form-grid, .actions { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div>
+          <p class="eyebrow">LOCAL · DRY RUN</p>
+          <h1>RTSP 얼굴 인식 테스트</h1>
+          <p>터미널 로그 대신 연결 상태, 인식 결과, 자원 사용량과 스냅샷을 한 화면에서 확인합니다.</p>
+        </div>
+        <div class="health"><span id="health-dot" class="dot"></span><span id="health-text">API 확인 중</span></div>
+      </header>
+
+      <section class="camera-grid">
+        <section class="panel">
+          <div class="camera-heading">
+            <div>
+              <h2 id="camera-title">카메라 영상</h2>
+              <small id="camera-meta">등록된 카메라를 선택하세요.</small>
+            </div>
+            <button id="camera-reload" class="secondary" type="button" disabled>영상 새로고침</button>
+          </div>
+          <div class="player">
+            <iframe
+              id="camera-frame"
+              title="선택한 CCTV 실시간 영상"
+              allow="autoplay; fullscreen; picture-in-picture"
+              allowfullscreen
+            ></iframe>
+            <div id="camera-empty" class="player-empty">카메라를 등록하고 선택하면 MediaMTX 실시간 영상이 표시됩니다.</div>
+          </div>
+          <p id="camera-status" class="message">영상은 RTSP 자격 증명을 노출하지 않고 로컬 HLS 포트로 재생합니다.</p>
+        </section>
+
+        <section class="panel">
+          <h2>카메라 등록</h2>
+          <form id="camera-form">
+            <label>카메라 이름<input id="camera-name" type="text" maxlength="100" placeholder="예: 정문 카메라" required></label>
+            <label style="margin-top: 12px">설치 위치<input id="camera-location" type="text" maxlength="200" placeholder="예: 1층 로비"></label>
+            <label style="margin-top: 12px">RTSP 주소<input id="camera-rtsp-url" type="url" maxlength="2048" placeholder="rtsp://192.168.0.20:554/stream" spellcheck="false" required></label>
+            <div class="form-grid" style="margin-top: 12px">
+              <label>RTSP 아이디<input id="camera-username" type="text" maxlength="256" autocomplete="username" spellcheck="false"></label>
+              <label>RTSP 비밀번호<input id="camera-password" type="password" maxlength="512" autocomplete="current-password"></label>
+            </div>
+            <div class="checks">
+              <label><input id="camera-on-demand" type="checkbox" checked> 영상을 볼 때만 RTSP 연결</label>
+            </div>
+            <p class="hint">MediaMTX 경로는 자동 생성됩니다. 계정이 필요 없는 카메라는 아이디와 비밀번호를 모두 비워 두세요.</p>
+            <button class="primary" type="submit">카메라 등록</button>
+          </form>
+          <p id="camera-error" class="message" role="alert"></p>
+          <div id="camera-list" class="camera-list"><p class="empty">등록된 카메라가 없습니다.</p></div>
+        </section>
+      </section>
+
+      <section class="grid">
+        <aside class="stack">
+          <section class="panel">
+            <h2>테스트 설정</h2>
+            <form id="start-form">
+              <div class="form-grid">
+                <label>분석 FPS<input id="sample-fps" type="number" min="0.1" max="30" step="0.1" value="2"></label>
+                <label>최대 샘플<input id="max-samples" type="number" min="1" max="7200" step="1" value="240"></label>
+              </div>
+              <div class="checks">
+                <label><input id="match-faces" type="checkbox" checked> 얼굴 인식 실행</label>
+                <label><input id="save-snapshots" type="checkbox" checked> 스냅샷 저장</label>
+              </div>
+              <div class="actions">
+                <button id="start-button" class="primary" type="submit">테스트 시작</button>
+                <button id="stop-button" class="secondary" type="button" disabled>중지 요청</button>
+              </div>
+            </form>
+            <p id="form-error" class="message" role="alert"></p>
+          </section>
+
+          <section class="panel">
+            <h2>실행 기록</h2>
+            <div id="history" class="history"><p class="empty">아직 실행 기록이 없습니다.</p></div>
+          </section>
+
+          <section class="panel">
+            <h2>실시간 이벤트</h2>
+            <div id="events" class="events"><p class="empty">세션을 시작하면 이벤트가 표시됩니다.</p></div>
+          </section>
+        </aside>
+
+        <div class="stack">
+          <section class="panel">
+            <div class="status-line">
+              <div>
+                <h2>현재 세션</h2>
+                <small id="session-id">선택된 세션 없음</small>
+              </div>
+              <span id="session-status" class="status-badge">대기</span>
+            </div>
+            <div class="progress"><div id="progress-bar"></div></div>
+            <div class="progress-label"><span id="progress-count">0 / 0 프레임</span><span id="elapsed">0.0초</span></div>
+            <div class="metrics">
+              <div class="metric"><span>현재 CPU</span><strong id="cpu">—</strong></div>
+              <div class="metric"><span>현재 메모리</span><strong id="memory">—</strong></div>
+              <div class="metric"><span>RTSP 연결</span><strong id="connections">—</strong></div>
+              <div class="metric"><span>재연결</span><strong id="reconnects">—</strong></div>
+              <div class="metric"><span>얼굴 검출</span><strong id="faces">—</strong></div>
+              <div class="metric"><span>정상 인식</span><strong id="matches">—</strong></div>
+              <div class="metric"><span>Unknown</span><strong id="unknowns">—</strong></div>
+              <div class="metric"><span>캐시 적중</span><strong id="cache-hits">—</strong></div>
+            </div>
+            <p id="last-message" class="message">테스트를 시작할 준비가 됐습니다.</p>
+          </section>
+
+          <section class="panel">
+            <h2>얼굴 인식 결과</h2>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>샘플</th><th>상태</th><th>인물</th><th>유사도</th><th>Track</th><th>얼굴 크기</th><th>이미지</th></tr></thead>
+                <tbody id="face-results"><tr><td colspan="7" class="empty">결과가 없습니다.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="status-line"><h2>스냅샷</h2><small id="snapshot-count">0장</small></div>
+            <div id="gallery" class="gallery"><p class="empty">저장된 스냅샷이 없습니다.</p></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="preview"><button id="preview-close" type="button">닫기</button><img id="preview-image" alt="선택한 CCTV 스냅샷"></dialog>
+
+    <script>
+      const state = {
+        session: null,
+        eventSource: null,
+        snapshotsBySample: new Map(),
+        refreshTimer: null,
+        refreshInFlight: null,
+        cameras: [],
+        selectedCameraId: null
+      };
+      const terminal = new Set(["completed", "stopped", "failed"]);
+      const eventNames = [
+        "session_started", "analysis_run_created", "face_matching_pipeline_initialized",
+        "rtsp_worker_started", "rtsp_source_connected", "rtsp_source_reconnecting",
+        "video_face_similarity_evaluated", "face_matching_run_completed",
+        "rtsp_worker_finished", "rtsp_worker_failed", "session_progress",
+        "session_stop_requested", "session_finished"
+      ];
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.detail || `요청 실패 (${response.status})`);
+        }
+        if (response.status === 204) return null;
+        return response.json();
+      }
+
+      const text = (id, value) => { document.getElementById(id).textContent = value; };
+      const formatNumber = value => value == null ? "—" : Number(value).toLocaleString("ko-KR");
+      const formatFixed = (value, digits = 1) => value == null ? "—" : Number(value).toFixed(digits);
+
+      async function checkHealth() {
+        try {
+          const health = await api("/health");
+          document.getElementById("health-dot").classList.toggle("ok", health.status === "ok");
+          text("health-text", `API 정상 · DB v${health.checks.database.schema_version}`);
+        } catch (error) {
+          text("health-text", error.message);
+        }
+      }
+
+      async function loadCameras(preferredId = null) {
+        const result = await api("/test-cameras?limit=100");
+        state.cameras = result.items;
+        const savedId = Number(localStorage.getItem("cctv.selectedCameraId"));
+        const candidateId = preferredId ?? state.selectedCameraId ?? (Number.isFinite(savedId) ? savedId : null);
+        const playable = item => item.enabled && item.provisioning_status !== "error" && item.provisioning_status !== "pending";
+        const candidate = state.cameras.find(item => item.id === candidateId && playable(item))
+          || state.cameras.find(playable)
+          || null;
+        renderCameraList();
+        if (candidate) selectCamera(candidate.id);
+        else clearCameraPlayer();
+      }
+
+      function renderCameraList() {
+        const list = document.getElementById("camera-list");
+        list.replaceChildren();
+        if (!state.cameras.length) {
+          const empty = document.createElement("p");
+          empty.className = "empty";
+          empty.textContent = "등록된 카메라가 없습니다.";
+          list.append(empty);
+          return;
+        }
+        for (const camera of state.cameras) {
+          const item = document.createElement("div");
+          item.className = `camera-item${camera.id === state.selectedCameraId ? " selected" : ""}${camera.enabled ? "" : " disabled"}`;
+          const select = document.createElement("button");
+          select.className = "camera-select";
+          select.type = "button";
+          select.disabled = !camera.enabled || ["error", "pending"].includes(camera.provisioning_status);
+          const name = document.createElement("strong");
+          name.textContent = camera.name;
+          const meta = document.createElement("small");
+          const endpoint = camera.rtsp_endpoint || "외부 설정";
+          meta.textContent = `${camera.location || "위치 미지정"} · ${endpoint} · /${camera.stream_path} · ${camera.provisioning_status}`;
+          select.append(name, meta);
+          select.addEventListener("click", () => selectCamera(camera.id));
+
+          const actions = document.createElement("div");
+          actions.className = "icon-actions";
+          const toggle = document.createElement("button");
+          toggle.className = "icon-button";
+          toggle.type = "button";
+          toggle.textContent = camera.enabled ? "사용 중" : "사용 안 함";
+          toggle.addEventListener("click", () => toggleCamera(camera));
+          actions.append(toggle);
+          if (camera.credentials_configured && camera.provisioning_status === "error") {
+            const sync = document.createElement("button");
+            sync.className = "icon-button";
+            sync.type = "button";
+            sync.textContent = "재시도";
+            sync.addEventListener("click", () => syncCamera(camera));
+            actions.append(sync);
+          }
+          const remove = document.createElement("button");
+          remove.className = "icon-button danger";
+          remove.type = "button";
+          remove.textContent = "삭제";
+          remove.addEventListener("click", () => deleteCamera(camera));
+          actions.append(remove);
+          item.append(select, actions);
+          list.append(item);
+        }
+      }
+
+      function selectCamera(cameraId) {
+        const camera = state.cameras.find(item => item.id === cameraId && item.enabled && !["error", "pending"].includes(item.provisioning_status));
+        if (!camera) return;
+        state.selectedCameraId = camera.id;
+        localStorage.setItem("cctv.selectedCameraId", String(camera.id));
+        text("camera-title", camera.name);
+        text("camera-meta", `${camera.location || "위치 미지정"} · ${camera.rtsp_endpoint || "외부 설정"} · MediaMTX /${camera.stream_path}`);
+        text("camera-status", "영상 플레이어를 연결하고 있습니다. 첫 재생은 수 초 걸릴 수 있습니다.");
+        const frame = document.getElementById("camera-frame");
+        frame.src = camera.preview_url;
+        document.getElementById("camera-empty").hidden = true;
+        document.getElementById("camera-reload").disabled = false;
+        renderCameraList();
+        refreshCameraStatus(camera);
+      }
+
+      function clearCameraPlayer() {
+        state.selectedCameraId = null;
+        localStorage.removeItem("cctv.selectedCameraId");
+        const frame = document.getElementById("camera-frame");
+        frame.removeAttribute("src");
+        document.getElementById("camera-empty").hidden = false;
+        document.getElementById("camera-reload").disabled = true;
+        text("camera-title", "카메라 영상");
+        text("camera-meta", "등록된 카메라를 선택하세요.");
+        text("camera-status", "영상은 RTSP 자격 증명을 노출하지 않고 로컬 HLS 포트로 재생합니다.");
+      }
+
+      async function toggleCamera(camera) {
+        text("camera-error", "");
+        try {
+          await api(`/test-cameras/${camera.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({ enabled: !camera.enabled })
+          });
+          await loadCameras(camera.enabled ? null : camera.id);
+        } catch (error) {
+          text("camera-error", error.message);
+        }
+      }
+
+      async function syncCamera(camera) {
+        text("camera-error", "");
+        try {
+          const synced = await api(`/test-cameras/${camera.id}/sync`, {
+            method: "POST",
+            body: "{}"
+          });
+          await loadCameras(synced.id);
+        } catch (error) {
+          text("camera-error", error.message);
+          await loadCameras().catch(() => {});
+        }
+      }
+
+      async function refreshCameraStatus(camera) {
+        try {
+          const result = await api(`/test-cameras/${camera.id}/status`);
+          if (state.selectedCameraId !== camera.id) return;
+          if (result.online) text("camera-status", "RTSP 원본이 연결되어 실시간 영상을 수신하고 있습니다.");
+          else if (result.configured) text("camera-status", "경로는 준비됐습니다. 플레이어 재생을 시작하면 RTSP 원본에 연결합니다.");
+          else text("camera-status", "MediaMTX 경로가 아직 준비되지 않았습니다.");
+        } catch (error) {
+          if (state.selectedCameraId === camera.id) text("camera-status", error.message);
+        }
+      }
+
+      async function deleteCamera(camera) {
+        if (!confirm(`'${camera.name}' 등록과 MediaMTX 경로를 삭제할까요? 카메라 장치의 설정은 변경되지 않습니다.`)) return;
+        text("camera-error", "");
+        try {
+          await api(`/test-cameras/${camera.id}`, { method: "DELETE" });
+          if (state.selectedCameraId === camera.id) clearCameraPlayer();
+          await loadCameras();
+        } catch (error) {
+          text("camera-error", error.message);
+        }
+      }
+
+      function summaryFaceData(session) {
+        return session?.result_summary?.face_matching || {};
+      }
+
+      function renderSession(session) {
+        state.session = session;
+        const active = session && !terminal.has(session.status);
+        document.getElementById("start-button").disabled = Boolean(active);
+        document.getElementById("stop-button").disabled = !active || session.status === "stopping";
+        if (!session) return;
+        const progress = Math.min(100, session.max_samples ? session.processed_samples / session.max_samples * 100 : 0);
+        const statusBadge = document.getElementById("session-status");
+        statusBadge.textContent = session.status;
+        statusBadge.className = `status-badge ${session.status}`;
+        document.getElementById("progress-bar").style.width = `${progress}%`;
+        text("session-id", `${session.source_name} · ${session.id}`);
+        text("progress-count", `${formatNumber(session.processed_samples)} / ${formatNumber(session.max_samples)} 프레임`);
+        text("elapsed", `${formatFixed(session.elapsed_seconds)}초`);
+        text("cpu", session.cpu_percent == null ? "—" : `${formatFixed(session.cpu_percent)}%`);
+        text("memory", session.memory_mib == null ? "—" : `${formatFixed(session.memory_mib)} MiB`);
+        text("connections", formatNumber(session.connection_count));
+        text("reconnects", formatNumber(session.reconnect_count));
+        const face = summaryFaceData(session);
+        text("faces", formatNumber(face.detected_faces));
+        text("matches", formatNumber(face.matched_faces));
+        text("unknowns", formatNumber(face.unknown_faces));
+        text("cache-hits", formatNumber(face.cache_hits));
+        text("last-message", session.last_message || (session.error_type ? `실패: ${session.error_type}` : "처리 중입니다."));
+      }
+
+      async function loadSessions(selectLatest = false) {
+        const result = await api("/test-sessions");
+        const history = document.getElementById("history");
+        history.replaceChildren();
+        if (!result.items.length) {
+          const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = "아직 실행 기록이 없습니다."; history.append(empty); return;
+        }
+        for (const session of result.items) {
+          const button = document.createElement("button"); button.type = "button";
+          const label = document.createElement("span"); label.textContent = `${session.source_name} · ${session.processed_samples}/${session.max_samples}`;
+          const meta = document.createElement("small"); meta.textContent = session.status;
+          button.append(label, meta); button.addEventListener("click", () => selectSession(session.id)); history.append(button);
+        }
+        if (selectLatest && !state.session) await selectSession(result.items[0].id);
+      }
+
+      async function selectSession(id) {
+        closeEvents();
+        stopRefreshTimer();
+        const session = await api(`/test-sessions/${id}`);
+        renderSession(session);
+        await refreshDetails(id);
+        if (!terminal.has(session.status)) {
+          openEvents(id);
+          startRefreshTimer();
+        }
+      }
+
+      async function refreshCurrent() {
+        if (!state.session) return;
+        if (state.refreshInFlight) return state.refreshInFlight;
+        const sessionId = state.session.id;
+        state.refreshInFlight = (async () => {
+          try {
+            const session = await api(`/test-sessions/${sessionId}`);
+            if (!state.session || state.session.id !== sessionId) return;
+            renderSession(session);
+            await refreshDetails(sessionId);
+            if (terminal.has(session.status)) {
+              closeEvents();
+              stopRefreshTimer();
+            }
+          } catch (error) {
+            text("last-message", error.message);
+          }
+        })();
+        try {
+          await state.refreshInFlight;
+        } finally {
+          state.refreshInFlight = null;
+        }
+      }
+
+      async function refreshDetails(sessionId) {
+        if (!state.session || state.session.id !== sessionId) return;
+        await loadSnapshots(sessionId);
+        await loadFaceResults(sessionId);
+      }
+
+      async function loadSnapshots(sessionId) {
+        const result = await api(`/test-sessions/${sessionId}/snapshots`);
+        if (!state.session || state.session.id !== sessionId) return;
+        const snapshotsBySample = new Map();
+        for (const item of result.items) if (item.sample_index != null) snapshotsBySample.set(item.sample_index, item.url);
+        const fragment = document.createDocumentFragment();
+        if (!result.items.length) {
+          const empty = document.createElement("p"); empty.className = "empty"; empty.textContent = "저장된 스냅샷이 없습니다."; fragment.append(empty);
+        } else {
+          for (const item of result.items.slice(0, 60)) {
+            const figure = document.createElement("figure"); figure.className = "shot";
+            const image = document.createElement("img"); image.src = item.url; image.loading = "lazy"; image.alt = `샘플 ${item.sample_index ?? "-"}`;
+            image.addEventListener("click", () => preview(item.url));
+            const caption = document.createElement("figcaption"); caption.textContent = `샘플 ${item.sample_index ?? "-"}`;
+            figure.append(image, caption); fragment.append(figure);
+          }
+        }
+        state.snapshotsBySample = snapshotsBySample;
+        text("snapshot-count", `${result.items.length}장`);
+        document.getElementById("gallery").replaceChildren(fragment);
+      }
+
+      async function loadFaceResults(sessionId) {
+        if (!state.session || state.session.id !== sessionId) return;
+        const analysisRunId = state.session.analysis_run_id;
+        const replacement = document.createElement("tbody");
+        if (!analysisRunId) {
+          const row = replacement.insertRow(); const cell = row.insertCell(); cell.colSpan = 7; cell.className = "empty"; cell.textContent = "분석 실행 준비 중입니다.";
+          document.getElementById("face-results").replaceChildren(...replacement.children);
+          return;
+        }
+        const result = await api(`/face-match-events?analysis_run_id=${encodeURIComponent(analysisRunId)}&limit=100`);
+        if (!state.session || state.session.id !== sessionId) return;
+        if (!result.items.length) {
+          const row = replacement.insertRow(); const cell = row.insertCell(); cell.colSpan = 7; cell.className = "empty"; cell.textContent = "아직 얼굴 인식 결과가 없습니다.";
+        } else {
+          for (const item of result.items) {
+            const row = replacement.insertRow();
+            row.insertCell().textContent = item.sample_index;
+            const statusCell = row.insertCell(); statusCell.textContent = item.match_status; statusCell.className = item.match_status;
+            row.insertCell().textContent = item.external_id || item.display_name || "unknown";
+            row.insertCell().textContent = Number(item.best_similarity).toFixed(3);
+            row.insertCell().textContent = item.track_id ?? "—";
+            row.insertCell().textContent = `${item.face_bounds.width}×${item.face_bounds.height}`;
+            const imageCell = row.insertCell(); const url = state.snapshotsBySample.get(item.sample_index);
+            if (url) {
+              const button = document.createElement("button"); button.type = "button"; button.className = "thumb-button"; button.textContent = "보기"; button.addEventListener("click", () => preview(url)); imageCell.append(button);
+            } else imageCell.textContent = "—";
+          }
+        }
+        document.getElementById("face-results").replaceChildren(...replacement.children);
+        try {
+          const summary = await api(`/analysis-runs/${encodeURIComponent(analysisRunId)}/face-match-summary`);
+          if (!state.session || state.session.id !== sessionId) return;
+          text("faces", formatNumber(summary.detected_faces)); text("matches", formatNumber(summary.matched_faces)); text("unknowns", formatNumber(summary.unknown_faces));
+        } catch (_) { /* final worker summary remains available */ }
+      }
+
+      function openEvents(id) {
+        closeEvents();
+        const source = new EventSource(`/test-sessions/${id}/events`);
+        state.eventSource = source;
+        for (const name of eventNames) source.addEventListener(name, event => handleEvent(name, event));
+        source.onerror = () => { if (state.session && !terminal.has(state.session.status)) text("last-message", "실시간 연결을 재시도하고 있습니다."); };
+      }
+
+      function handleEvent(name, event) {
+        const data = JSON.parse(event.data).data || {};
+        const events = document.getElementById("events");
+        if (events.querySelector(".empty")) events.replaceChildren();
+        const line = document.createElement("div"); line.className = "event";
+        const detail = name === "video_face_similarity_evaluated" ? `${data.match_status} · ${(data.best_similarity ?? 0).toFixed(3)}` : (data.status || data.source_name || "");
+        line.textContent = `${new Date().toLocaleTimeString("ko-KR")} · ${name}${detail ? ` · ${detail}` : ""}`;
+        events.prepend(line); while (events.children.length > 25) events.lastElementChild.remove();
+        if (name === "session_progress" && state.session) {
+          renderSession({ ...state.session, ...data });
+        } else if (name === "video_face_similarity_evaluated" || name === "session_finished") {
+          refreshCurrent();
+        }
+      }
+
+      function closeEvents() { if (state.eventSource) state.eventSource.close(); state.eventSource = null; }
+      function startRefreshTimer() {
+        if (state.refreshTimer == null) state.refreshTimer = setInterval(refreshCurrent, 2000);
+      }
+      function stopRefreshTimer() {
+        if (state.refreshTimer != null) clearInterval(state.refreshTimer);
+        state.refreshTimer = null;
+      }
+      function preview(url) { document.getElementById("preview-image").src = url; document.getElementById("preview").showModal(); }
+
+      document.getElementById("camera-form").addEventListener("submit", async event => {
+        event.preventDefault();
+        text("camera-error", "");
+        try {
+          const camera = await api("/test-cameras", {
+            method: "POST",
+            body: JSON.stringify({
+              name: document.getElementById("camera-name").value,
+              location: document.getElementById("camera-location").value || null,
+              rtsp_url: document.getElementById("camera-rtsp-url").value,
+              username: document.getElementById("camera-username").value || null,
+              password: document.getElementById("camera-password").value || null,
+              source_on_demand: document.getElementById("camera-on-demand").checked
+            })
+          });
+          event.currentTarget.reset();
+          document.getElementById("camera-on-demand").checked = true;
+          await loadCameras(camera.id);
+        } catch (error) {
+          text("camera-error", error.message);
+          await loadCameras().catch(() => {});
+        }
+      });
+      document.getElementById("camera-reload").addEventListener("click", () => {
+        const camera = state.cameras.find(item => item.id === state.selectedCameraId);
+        if (!camera) return;
+        const frame = document.getElementById("camera-frame");
+        text("camera-status", "영상 플레이어를 다시 연결하고 있습니다.");
+        frame.src = "about:blank";
+        setTimeout(() => { frame.src = camera.preview_url; }, 50);
+      });
+      document.getElementById("camera-frame").addEventListener("load", event => {
+        if (event.currentTarget.getAttribute("src")) {
+          text("camera-status", "플레이어가 열렸습니다. 재생이 멈춰 있으면 화면의 재생 버튼을 누르세요.");
+        }
+      });
+      document.getElementById("start-form").addEventListener("submit", async event => {
+        event.preventDefault(); text("form-error", "");
+        try {
+          const session = await api("/test-sessions", { method: "POST", body: JSON.stringify({
+            sample_fps: Number(document.getElementById("sample-fps").value),
+            max_samples: Number(document.getElementById("max-samples").value),
+            match_faces: document.getElementById("match-faces").checked,
+            save_snapshots: document.getElementById("save-snapshots").checked
+          }) });
+          renderSession(session); document.getElementById("events").replaceChildren(); openEvents(session.id); startRefreshTimer(); await loadSessions();
+        } catch (error) { text("form-error", error.message); }
+      });
+      document.getElementById("stop-button").addEventListener("click", async () => {
+        if (!state.session) return;
+        try { renderSession(await api(`/test-sessions/${state.session.id}/stop`, { method: "POST", body: "{}" })); }
+        catch (error) { text("form-error", error.message); }
+      });
+      document.getElementById("preview-close").addEventListener("click", () => document.getElementById("preview").close());
+
+      checkHealth();
+      loadCameras().catch(error => text("camera-error", error.message));
+      loadSessions(true).catch(error => text("form-error", error.message));
+    </script>
+  </body>
+</html>

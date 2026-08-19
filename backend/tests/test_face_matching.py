@@ -146,7 +146,15 @@ def test_face_matching_consumer_aggregates_privacy_safe_results(tmp_path: Path) 
                 DetectedFaceEmbedding(FaceBounds(50, 2, 30, 40), (0, 1, 0), 0.95),
             )
 
-    consumer = FaceMatchingConsumer(FakeExtractor(), matcher, source_name="sample.mp4")
+    persisted_observations = []
+    consumer = FaceMatchingConsumer(
+        FakeExtractor(),
+        matcher,
+        source_name="sample.mp4",
+        observation_sink=lambda observation, track_id: persisted_observations.append(
+            (observation, track_id)
+        ),
+    )
     consumer(
         DecodedFrame(
             source_index=10,
@@ -165,6 +173,8 @@ def test_face_matching_consumer_aggregates_privacy_safe_results(tmp_path: Path) 
     assert summary.matched_identity_counts == {identity.id: 1}
     assert summary.best_similarity == 1
     assert len(consumer.last_observations) == 2
+    assert len(persisted_observations) == 2
+    assert {track_id for _, track_id in persisted_observations} == {None}
     matched_decision = consumer.last_observations[0].decision
     unknown_decision = consumer.last_observations[1].decision
     assert matched_decision.status is FaceMatchStatus.MATCHED

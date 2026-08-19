@@ -110,6 +110,7 @@ def test_rtsp_cli_persists_yolo_results_without_exposing_url(
                 "2",
                 "--max-samples",
                 "2",
+                "--emit-progress",
             ]
         )
     finally:
@@ -122,6 +123,7 @@ def test_rtsp_cli_persists_yolo_results_without_exposing_url(
 
     assert "secret-user" not in captured_output
     assert "secret-password" not in captured_output
+    assert '"event":"rtsp_worker_progress"' in captured_output
     assert output["source_name"] == "camera-1"
     assert output["analysis"]["analysis_run_id"] == runs.items[0].id
     assert runs.total == 1

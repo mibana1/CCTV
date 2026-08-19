@@ -8,7 +8,10 @@
 - 값이 있으면 MediaMTX가 해당 RTSP 카메라를 한 번만 pull합니다.
 - 분석 워커는 컨테이너 내부의 `rtsp://mediamtx:8554/camera`를 읽습니다.
 - Hiperwall은 `rtsp://<Docker 호스트 IP>:8554/camera`를 읽을 수 있습니다.
-- 실제 계정 정보는 `.env`에만 저장하고 Git에 추가하지 않습니다.
+- 기본 `camera` 경로의 계정 정보는 `.env`에만 저장하고 Git에 추가하지 않습니다.
+- 대시보드에서 추가한 카메라는 `cam-<고유값>` 경로로 Control API에 등록됩니다.
+- Control API는 `127.0.0.1:9997`에만 열리고 내부 프록시는 Backend 주소만 허용합니다.
+- 동적 카메라 자격 증명은 SQLite에 암호화되고 키는 `runtime/secrets`에 보관됩니다.
 
 로컬 영상으로 중계를 확인할 때는 저장소 루트에서 다음을 실행합니다.
 

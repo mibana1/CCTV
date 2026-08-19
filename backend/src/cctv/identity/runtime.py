@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from cctv.core.settings import Settings
 from cctv.db import IdentityRepository, initialize_database
 from cctv.identity.face import OpenCvSFaceExtractor
-from cctv.identity.matching import FaceIdentityMatcher, FaceMatchingConsumer
+from cctv.identity.matching import (
+    FaceIdentityMatcher,
+    FaceMatchingConsumer,
+    FaceMatchObservation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +23,7 @@ def create_sface_matching_consumer(
     source_name: str,
     similarity_threshold: float | None = None,
     minimum_margin: float | None = None,
+    observation_sink: Callable[[FaceMatchObservation, int | None], None] | None = None,
 ) -> FaceMatchingConsumer:
     """Load enabled registered identities and build one sequential frame consumer."""
     initialize_database(settings.database_path)
@@ -66,6 +72,7 @@ def create_sface_matching_consumer(
         matcher,
         source_name=source_name,
         unknown_retry_seconds=settings.face_match_unknown_retry_seconds,
+        observation_sink=observation_sink,
     )
 
 

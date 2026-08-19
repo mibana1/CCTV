@@ -21,11 +21,17 @@ from cctv.db import (
     AnalysisRunRecord,
     AnalysisRunStatus,
     DetectionRepository,
+    FaceMatchEventInput,
+    FaceMatchRepository,
     RuleRepository,
     initialize_database,
 )
 from cctv.hiperwall import HiperwallDryRunPlanner
-from cctv.identity import FaceMatchingConsumer, create_sface_matching_consumer
+from cctv.identity import (
+    FaceMatchingConsumer,
+    FaceMatchObservation,
+    create_sface_matching_consumer,
+)
 from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
 from cctv.media import (
     DecodedFrame,
@@ -86,6 +92,7 @@ class RtspWorker:
         sample_fps: float,
         frame_consumer: FrameConsumer | None = None,
         max_samples: int | None = None,
+        emit_progress: bool = False,
     ) -> None:
         if not isfinite(sample_fps) or sample_fps <= 0:
             raise ValueError("sample_fps must be a finite number greater than zero")
@@ -96,6 +103,7 @@ class RtspWorker:
         self.sample_fps = float(sample_fps)
         self.frame_consumer = frame_consumer
         self.max_samples = max_samples
+        self.emit_progress = emit_progress
         self._status = WorkerStatus.IDLE
         self._status_lock = Lock()
         self._stop_event = Event()
@@ -156,6 +164,19 @@ class RtspWorker:
                 if self.frame_consumer is not None:
                     self.frame_consumer(sampled_frame)
                 processed_samples += 1
+                if self.emit_progress:
+                    logger.info(
+                        "RTSP worker progress updated",
+                        extra={
+                            "event": "rtsp_worker_progress",
+                            "source_name": self.reader.source_name,
+                            "processed_samples": processed_samples,
+                            "max_samples": self.max_samples,
+                            "source_index": sampled_frame.source_index,
+                            "sample_index": sampled_frame.sample_index,
+                            "timestamp_seconds": sampled_frame.timestamp_seconds,
+                        },
+                    )
                 if first_source_index is None:
                     first_source_index = sampled_frame.source_index
                     first_timestamp_seconds = sampled_frame.timestamp_seconds
@@ -241,6 +262,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--source-name")
     parser.add_argument("--sample-fps", type=float)
     parser.add_argument("--max-samples", type=positive_integer)
+    parser.add_argument("--emit-progress", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--save-snapshots", action="store_true")
     parser.add_argument("--snapshot-dir", type=Path)
     parser.add_argument("--jpeg-quality", type=jpeg_quality)
@@ -318,6 +340,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
         face_matching_consumer: FaceMatchingConsumer | None = None
+        face_match_repository: FaceMatchRepository | None = None
         if analyze_objects:
             detector = create_detector(
                 DetectorConfig(
@@ -433,11 +456,53 @@ def run(argv: Sequence[str] | None = None) -> None:
             consumers.append(analyze_frame)
 
         if match_faces:
+            if analysis_run is not None:
+                face_match_repository = FaceMatchRepository(settings.database_path)
+
+            def persist_face_observation(
+                observation: FaceMatchObservation,
+                track_id: int | None,
+            ) -> None:
+                if face_match_repository is None or analysis_run is None:
+                    return
+                decision = observation.decision
+                face_match_repository.save_event(
+                    analysis_run.id,
+                    FaceMatchEventInput(
+                        source_index=observation.source_index,
+                        sample_index=observation.sample_index,
+                        source_timestamp_seconds=observation.timestamp_seconds,
+                        face_index=observation.face_index,
+                        track_id=track_id,
+                        face_x=observation.face.bounds.x,
+                        face_y=observation.face.bounds.y,
+                        face_width=observation.face.bounds.width,
+                        face_height=observation.face.bounds.height,
+                        detection_confidence=observation.face.detection_confidence,
+                        match_status=decision.status.value,
+                        rejection_reason=(
+                            decision.rejection_reason.value
+                            if decision.rejection_reason is not None
+                            else None
+                        ),
+                        identity_id=decision.identity_id,
+                        external_id=decision.external_id,
+                        display_name=decision.display_name,
+                        best_candidate_identity_id=decision.best_candidate.identity_id,
+                        best_candidate_external_id=decision.best_candidate.external_id,
+                        best_similarity=decision.best_candidate.similarity,
+                        second_best_similarity=decision.second_best_similarity,
+                        similarity_threshold=decision.similarity_threshold,
+                        minimum_margin=decision.minimum_margin,
+                    ),
+                )
+
             face_matching_consumer = create_sface_matching_consumer(
                 settings,
                 source_name=source_name,
                 similarity_threshold=arguments.face_match_threshold,
                 minimum_margin=arguments.face_match_margin,
+                observation_sink=persist_face_observation,
             )
             if tracker is None:
                 consumers.append(face_matching_consumer)
@@ -485,6 +550,7 @@ def run(argv: Sequence[str] | None = None) -> None:
             sample_fps=effective_sample_fps,
             frame_consumer=frame_consumer,
             max_samples=max_samples,
+            emit_progress=arguments.emit_progress,
         )
 
         def request_stop(signum: int, frame: FrameType | None) -> None:

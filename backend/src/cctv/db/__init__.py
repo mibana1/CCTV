@@ -1,5 +1,13 @@
 """Database connections, schemas, repositories, and migrations."""
 
+from cctv.db.cameras import (
+    CameraPage,
+    CameraProvisioningStatus,
+    CameraRecord,
+    CameraRepository,
+    CameraSourceRecord,
+    validate_stream_path,
+)
 from cctv.db.database import (
     DatabaseHealth,
     DatabaseState,
@@ -25,6 +33,13 @@ from cctv.db.display_actions import (
     DisplayActionPage,
     DisplayActionRecord,
     DisplayActionRepository,
+)
+from cctv.db.face_matches import (
+    FaceMatchEventInput,
+    FaceMatchEventPage,
+    FaceMatchEventRecord,
+    FaceMatchRepository,
+    FaceMatchRunSummary,
 )
 from cctv.db.identities import (
     DEFAULT_MODEL_VERSION,
@@ -58,6 +73,11 @@ __all__ = [
     "AnalysisRunPage",
     "AnalysisRunRecord",
     "AnalysisRunStatus",
+    "CameraPage",
+    "CameraProvisioningStatus",
+    "CameraRecord",
+    "CameraRepository",
+    "CameraSourceRecord",
     "DatabaseHealth",
     "DatabaseState",
     "DetectionPage",
@@ -66,6 +86,11 @@ __all__ = [
     "DisplayActionPage",
     "DisplayActionRecord",
     "DisplayActionRepository",
+    "FaceMatchEventInput",
+    "FaceMatchEventPage",
+    "FaceMatchEventRecord",
+    "FaceMatchRepository",
+    "FaceMatchRunSummary",
     "IdentityEmbeddingInput",
     "IdentityEmbeddingPage",
     "IdentityEmbeddingRecord",
@@ -86,4 +111,5 @@ __all__ = [
     "connect_database",
     "initialize_database",
     "normalize_embedding",
+    "validate_stream_path",
 ]

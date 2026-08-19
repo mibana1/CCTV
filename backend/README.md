@@ -193,6 +193,36 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 `CCTV_FACE_MATCH_SIMILARITY_THRESHOLD`와 `CCTV_FACE_MATCH_MINIMUM_MARGIN`으로
 판정 기준을 조정할 수 있습니다.
 
+신규 얼굴 비교 결과는 객체 분석 실행과 연결해 `face_match_events`에 저장됩니다.
+임베딩 벡터나 RTSP 주소는 저장하지 않으며 얼굴 위치, 판정, 후보 점수와
+`track_id`만 보존합니다. 로컬 테스트 대시보드에서는 다음 API로 실행별 결과를
+조회합니다.
+
+```text
+GET /face-match-events?analysis_run_id={analysis_run_id}&match_status=matched
+GET /analysis-runs/{analysis_run_id}/face-match-summary
+```
+
+## 로컬 RTSP 테스트 대시보드
+
+`CCTV_TEST_DASHBOARD_ENABLED=true`, `CCTV_APP_MODE=dry_run`, 개발·로컬·테스트
+환경과 localhost 요청을 모두 만족하면 `/test-dashboard`가 활성화됩니다.
+카메라 등록 영역에서 이름·위치·RTSP 주소·계정을 입력하면 `cam-<고유값>`
+MediaMTX 경로가 자동 생성됩니다. 선택한 경로는 `CCTV_MEDIA_HLS_BASE_URL`(기본
+`http://127.0.0.1:18888`)의 내장 HLS 플레이어로 표시합니다. RTSP 원본 URL은
+Fernet 암호문으로만 SQLite에 저장하며 API·로그에는 계정이나 전체 URL을 남기지
+않습니다. 키는 `CCTV_CAMERA_CREDENTIAL_KEY`가 없으면
+`runtime/secrets/camera_credentials.key`에 최초 생성됩니다.
+
+MediaMTX Control API는 `127.0.0.1:9997`에만 바인딩합니다. 내부 전용 네트워크의
+프록시가 Backend 고정 주소만 허용해 API를 전달하며 다른 컨테이너나 호스트에는
+포트를 공개하지 않습니다. 등록 경로는 기본적으로 `sourceOnDemand=true`이며,
+주기적 동기화가 MediaMTX 재시작 뒤에도 활성 카메라 경로를 복원합니다.
+대시보드가 실행하는 워커는 API 요청 처리와 분리된 자식 프로세스이며 한 번에
+하나만 허용됩니다. CPU·메모리는 Linux `/proc`에서 수집하고 SSE로 진행 상태와
+얼굴 판정 이벤트를 전달합니다. 운영·LIVE 모드 또는 원격 Host에서는 모든 테스트
+제어·스냅샷·얼굴 이벤트 엔드포인트가 HTTP 403을 반환합니다.
+
 객체 분석과 추적을 함께 켜면 얼굴 분석은 `person` 검출 박스 단위로 실행되고
 결과를 `track_id`에 캐시합니다. `matched` 결과는 해당 트랙이 활성 상태인 동안
 재사용하므로 매 프레임 YuNet/SFace를 실행하지 않습니다. `unknown` 또는 얼굴
