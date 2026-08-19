@@ -15,6 +15,7 @@ from cctv.identity import (
     FaceMatchRejectionReason,
     FaceMatchStatus,
 )
+from cctv.inference import BoundingBox, Detection, FrameDetections
 from cctv.media import DecodedFrame
 
 
@@ -173,3 +174,189 @@ def test_face_matching_consumer_aggregates_privacy_safe_results(tmp_path: Path) 
     assert unknown_decision.identity_id is None
     assert unknown_decision.external_id is None
     assert unknown_decision.display_name is None
+
+
+def test_face_matching_consumer_reuses_matched_result_for_same_track(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    identity = repository.create_identity(display_name="Person", identity_id="person-1")
+    repository.add_embedding(
+        identity.id,
+        model_name=SFACE_MODEL_NAME,
+        model_version=SFACE_MODEL_VERSION,
+        vector=(1, 0, 0),
+    )
+
+    class CountingExtractor:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.shapes: list[tuple[int, ...]] = []
+
+        def extract_many(self, image: np.ndarray, *, source_name: str = "frame"):
+            del source_name
+            self.calls += 1
+            self.shapes.append(image.shape)
+            return (DetectedFaceEmbedding(FaceBounds(1, 2, 20, 20), (1, 0, 0), 0.95),)
+
+    extractor = CountingExtractor()
+    consumer = FaceMatchingConsumer(
+        extractor,
+        FaceIdentityMatcher(_candidates(repository), similarity_threshold=0.8),
+        source_name="camera",
+        unknown_retry_seconds=2,
+    )
+
+    for sample_index in range(3):
+        frame, detections = _tracked_person_frame(sample_index, float(sample_index), track_id=7)
+        consumer.process_tracked(frame, detections, active_track_ids=(7,))
+        if sample_index == 0:
+            assert consumer.last_observations[0].face.bounds == FaceBounds(11, 22, 20, 20)
+
+    summary = consumer.summary
+    assert extractor.calls == 1
+    assert extractor.shapes == [(80, 80, 3)]
+    assert summary.track_cache_enabled is True
+    assert summary.processed_frames == 3
+    assert summary.tracked_person_detections == 3
+    assert summary.face_analysis_attempts == 1
+    assert summary.cache_hits == 2
+    assert summary.cached_tracks == 1
+    assert summary.matched_faces == 1
+    assert summary.matched_identity_counts == {identity.id: 1}
+    assert consumer.get_cached_decision(7) is not None
+    assert consumer.get_cached_decision(7).identity_id == identity.id
+    assert consumer.get_cached_decision(999) is None
+
+    expired_frame = DecodedFrame(
+        source_index=3,
+        sample_index=3,
+        timestamp_seconds=3,
+        image=np.zeros((100, 100, 3), dtype=np.uint8),
+    )
+    consumer.process_tracked(
+        expired_frame,
+        FrameDetections(
+            source_index=3,
+            sample_index=3,
+            timestamp_seconds=3,
+            frame_width=100,
+            frame_height=100,
+            inference_seconds=0,
+            detections=(),
+        ),
+        active_track_ids=(),
+    )
+    assert consumer.get_cached_decision(7) is None
+    assert consumer.summary.cached_tracks == 0
+
+
+def test_unknown_track_is_reanalyzed_after_retry_interval(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    identity = repository.create_identity(display_name="Person", identity_id="person-1")
+    repository.add_embedding(
+        identity.id,
+        model_name=SFACE_MODEL_NAME,
+        model_version=SFACE_MODEL_VERSION,
+        vector=(1, 0, 0),
+    )
+
+    class ImprovingExtractor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract_many(self, image: np.ndarray, *, source_name: str = "frame"):
+            del image, source_name
+            self.calls += 1
+            vector = (0, 1, 0) if self.calls == 1 else (1, 0, 0)
+            return (DetectedFaceEmbedding(FaceBounds(1, 2, 20, 20), vector, 0.95),)
+
+    extractor = ImprovingExtractor()
+    consumer = FaceMatchingConsumer(
+        extractor,
+        FaceIdentityMatcher(_candidates(repository), similarity_threshold=0.8),
+        source_name="camera",
+        unknown_retry_seconds=2,
+    )
+
+    observed_statuses: list[FaceMatchStatus] = []
+    for sample_index in range(4):
+        frame, detections = _tracked_person_frame(sample_index, float(sample_index), track_id=7)
+        consumer.process_tracked(frame, detections, active_track_ids=(7,))
+        if consumer.last_observations:
+            observed_statuses.append(consumer.last_observations[0].decision.status)
+
+    summary = consumer.summary
+    assert extractor.calls == 2
+    assert observed_statuses == [FaceMatchStatus.UNKNOWN, FaceMatchStatus.MATCHED]
+    assert summary.face_analysis_attempts == 2
+    assert summary.cache_hits == 2
+    assert summary.unknown_faces == 1
+    assert summary.matched_faces == 1
+
+
+def test_face_not_detected_is_temporarily_cached(tmp_path: Path) -> None:
+    repository = _repository(tmp_path)
+    identity = repository.create_identity(display_name="Person", identity_id="person-1")
+    repository.add_embedding(
+        identity.id,
+        model_name=SFACE_MODEL_NAME,
+        model_version=SFACE_MODEL_VERSION,
+        vector=(1, 0, 0),
+    )
+
+    class EmptyExtractor:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def extract_many(self, image: np.ndarray, *, source_name: str = "frame"):
+            del image, source_name
+            self.calls += 1
+            return ()
+
+    extractor = EmptyExtractor()
+    consumer = FaceMatchingConsumer(
+        extractor,
+        FaceIdentityMatcher(_candidates(repository)),
+        source_name="camera",
+        unknown_retry_seconds=2,
+    )
+
+    for sample_index in range(3):
+        frame, detections = _tracked_person_frame(sample_index, float(sample_index), track_id=7)
+        consumer.process_tracked(frame, detections, active_track_ids=(7,))
+
+    assert extractor.calls == 2
+    assert consumer.summary.face_analysis_attempts == 2
+    assert consumer.summary.cache_hits == 1
+    assert consumer.summary.detected_faces == 0
+
+
+def _tracked_person_frame(
+    sample_index: int,
+    timestamp_seconds: float,
+    *,
+    track_id: int,
+) -> tuple[DecodedFrame, FrameDetections]:
+    frame = DecodedFrame(
+        source_index=sample_index,
+        sample_index=sample_index,
+        timestamp_seconds=timestamp_seconds,
+        image=np.zeros((100, 100, 3), dtype=np.uint8),
+    )
+    result = FrameDetections(
+        source_index=sample_index,
+        sample_index=sample_index,
+        timestamp_seconds=timestamp_seconds,
+        frame_width=100,
+        frame_height=100,
+        inference_seconds=0,
+        detections=(
+            Detection(
+                class_id=0,
+                label="person",
+                confidence=0.9,
+                box=BoundingBox(10, 20, 90, 100),
+                track_id=track_id,
+            ),
+        ),
+    )
+    return frame, result

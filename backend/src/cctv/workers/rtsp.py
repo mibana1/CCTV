@@ -401,6 +401,12 @@ def run(argv: Sequence[str] | None = None) -> None:
                 result = detector.analyze(frame)
                 if tracker is not None:
                     result = tracker.update(result)
+                    if face_matching_consumer is not None:
+                        face_matching_consumer.process_tracked(
+                            frame,
+                            result,
+                            active_track_ids=tracker.active_track_ids,
+                        )
                 rule_events = rule_engine.process(result) if rule_engine is not None else ()
                 emitted_rule_events += len(rule_events)
                 display_actions = (
@@ -433,7 +439,17 @@ def run(argv: Sequence[str] | None = None) -> None:
                 similarity_threshold=arguments.face_match_threshold,
                 minimum_margin=arguments.face_match_margin,
             )
-            consumers.append(face_matching_consumer)
+            if tracker is None:
+                consumers.append(face_matching_consumer)
+            else:
+                logger.info(
+                    "Track-aware face matching cache enabled",
+                    extra={
+                        "event": "track_face_matching_cache_enabled",
+                        "source_name": source_name,
+                        "unknown_retry_seconds": settings.face_match_unknown_retry_seconds,
+                    },
+                )
 
         snapshot_writer: SnapshotWriter | None = None
         if save_snapshots:

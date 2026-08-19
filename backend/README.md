@@ -191,9 +191,19 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 
 환경변수 `CCTV_FACE_MATCHING_ENABLED=true`로 항상 켤 수도 있고,
 `CCTV_FACE_MATCH_SIMILARITY_THRESHOLD`와 `CCTV_FACE_MATCH_MINIMUM_MARGIN`으로
-판정 기준을 조정할 수 있습니다. 임베딩은 생체정보이므로 실제 운영에서는 API
-인증·권한, 전송 암호화, SQLite 파일 암호화 또는 접근 통제와 보존·삭제 정책을
-추가해야 합니다.
+판정 기준을 조정할 수 있습니다.
+
+객체 분석과 추적을 함께 켜면 얼굴 분석은 `person` 검출 박스 단위로 실행되고
+결과를 `track_id`에 캐시합니다. `matched` 결과는 해당 트랙이 활성 상태인 동안
+재사용하므로 매 프레임 YuNet/SFace를 실행하지 않습니다. `unknown` 또는 얼굴
+미검출 결과는 영구 고정하지 않고 기본 2초 뒤 다시 분석하며,
+`CCTV_FACE_MATCH_UNKNOWN_RETRY_SECONDS`로 간격을 조정할 수 있습니다. 실행 요약의
+`face_analysis_attempts`, `cache_hits`, `cached_tracks`에서 캐시 효과를 확인할 수
+있습니다. 객체 추적 없이 `--match-faces`만 실행하면 `track_id`가 없으므로 기존처럼
+샘플 프레임 전체를 분석합니다.
+
+임베딩은 생체정보이므로 실제 운영에서는 API 인증·권한, 전송 암호화, SQLite 파일
+암호화 또는 접근 통제와 보존·삭제 정책을 추가해야 합니다.
 
 ## 규칙 엔진
 

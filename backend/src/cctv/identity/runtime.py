@@ -61,7 +61,12 @@ def create_sface_matching_consumer(
             "minimum_margin": matcher.minimum_margin,
         },
     )
-    return FaceMatchingConsumer(extractor, matcher, source_name=source_name)
+    return FaceMatchingConsumer(
+        extractor,
+        matcher,
+        source_name=source_name,
+        unknown_retry_seconds=settings.face_match_unknown_retry_seconds,
+    )
 
 
 __all__ = ["create_sface_matching_consumer"]

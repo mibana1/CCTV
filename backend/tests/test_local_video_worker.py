@@ -375,6 +375,137 @@ def test_local_video_cli_matches_faces_as_an_independent_consumer(
     assert output["face_matching"]["matched_identity_counts"] == {"identity-1": 2}
 
 
+def test_local_video_cli_uses_track_aware_face_cache_with_object_tracking(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class PersonDetector:
+        def __init__(self) -> None:
+            self.processed_frames = 0
+            self.metadata = DetectorMetadata(
+                detector_type="custom",
+                model_path=tmp_path / "custom.model",
+                model_name="custom.model",
+                model_sha256="d" * 64,
+                device="cpu",
+                input_size=320,
+                confidence_threshold=0.4,
+                nms_threshold=0,
+            )
+
+        @property
+        def summary(self) -> DetectorRunSummary:
+            return DetectorRunSummary(
+                detector_type=self.metadata.detector_type,
+                model_path=self.metadata.model_path,
+                model_name=self.metadata.model_name,
+                model_sha256=self.metadata.model_sha256,
+                device=self.metadata.device,
+                input_size=self.metadata.input_size,
+                confidence_threshold=self.metadata.confidence_threshold,
+                nms_threshold=self.metadata.nms_threshold,
+                processed_frames=self.processed_frames,
+                total_detections=self.processed_frames,
+                total_inference_seconds=0,
+                average_inference_seconds=0,
+            )
+
+        def analyze(self, frame: DecodedFrame) -> FrameDetections:
+            self.processed_frames += 1
+            return FrameDetections(
+                source_index=frame.source_index,
+                sample_index=frame.sample_index,
+                timestamp_seconds=frame.timestamp_seconds,
+                frame_width=frame.image.shape[1],
+                frame_height=frame.image.shape[0],
+                inference_seconds=0,
+                detections=(Detection(0, "person", 0.9, BoundingBox(1, 1, 20, 20)),),
+            )
+
+    class FakeTrackedFaceConsumer:
+        def __init__(self) -> None:
+            self.direct_calls = 0
+            self.tracked_calls = 0
+            self.track_ids: list[tuple[int, ...]] = []
+
+        def __call__(self, frame: DecodedFrame) -> None:
+            del frame
+            self.direct_calls += 1
+
+        def process_tracked(
+            self,
+            frame: DecodedFrame,
+            result: FrameDetections,
+            *,
+            active_track_ids,
+        ) -> None:
+            del frame, result
+            self.tracked_calls += 1
+            self.track_ids.append(tuple(active_track_ids))
+
+        @property
+        def summary(self) -> FaceMatchingRunSummary:
+            return FaceMatchingRunSummary(
+                candidate_identity_count=1,
+                candidate_embedding_count=3,
+                similarity_threshold=0.45,
+                minimum_margin=0.05,
+                processed_frames=self.tracked_calls,
+                frames_with_faces=1,
+                detected_faces=1,
+                matched_faces=1,
+                unknown_faces=0,
+                best_similarity=0.9,
+                matched_identity_counts={"identity-1": 1},
+                track_cache_enabled=True,
+                tracked_person_detections=self.tracked_calls,
+                face_analysis_attempts=1,
+                cache_hits=max(0, self.tracked_calls - 1),
+                cached_tracks=1,
+            )
+
+    detector = PersonDetector()
+    face_consumer = FakeTrackedFaceConsumer()
+    video_path = create_test_video(tmp_path / "sample.avi")
+    monkeypatch.setattr("cctv.workers.local_video.create_detector", lambda config: detector)
+    monkeypatch.setattr(
+        "cctv.workers.local_video.create_sface_matching_consumer",
+        lambda *args, **kwargs: face_consumer,
+    )
+    monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_FACE_MATCHING_ENABLED", "false")
+    monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
+    monkeypatch.setenv("CCTV_RULES_ENABLED", "false")
+    monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "cctv.jsonl"))
+    get_settings.cache_clear()
+
+    try:
+        run_local_video_worker(
+            [
+                str(video_path),
+                "--analyze",
+                "--match-faces",
+                "--sample-fps",
+                "2",
+                "--max-samples",
+                "2",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    output = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert detector.processed_frames == 2
+    assert face_consumer.direct_calls == 0
+    assert face_consumer.tracked_calls == 2
+    assert face_consumer.track_ids == [(1,), (1,)]
+    assert output["face_matching"]["track_cache_enabled"] is True
+    assert output["face_matching"]["face_analysis_attempts"] == 1
+    assert output["face_matching"]["cache_hits"] == 1
+
+
 @pytest.mark.parametrize("max_samples", [0, -1])
 def test_local_video_worker_rejects_invalid_sample_limit(max_samples: int) -> None:
     with pytest.raises(ValueError, match="max_samples"):

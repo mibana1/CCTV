@@ -58,6 +58,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_FACE_MATCHING_ENABLED", "true")
     monkeypatch.setenv("CCTV_FACE_MATCH_SIMILARITY_THRESHOLD", "0.5")
     monkeypatch.setenv("CCTV_FACE_MATCH_MINIMUM_MARGIN", "0.08")
+    monkeypatch.setenv("CCTV_FACE_MATCH_UNKNOWN_RETRY_SECONDS", "3.5")
     monkeypatch.setenv("CCTV_RTSP_INPUT_URL", "rtsp://user:password@camera:554/stream")
     monkeypatch.setenv("CCTV_RTSP_WORKER_URL", "rtsp://mediamtx:8554/camera")
     monkeypatch.setenv("CCTV_RTSP_SOURCE_NAME", "camera-1")
@@ -117,6 +118,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.face_matching_enabled is True
     assert settings.face_match_similarity_threshold == 0.5
     assert settings.face_match_minimum_margin == 0.08
+    assert settings.face_match_unknown_retry_seconds == 3.5
     assert settings.rtsp_input_url == "rtsp://user:password@camera:554/stream"
     assert settings.rtsp_worker_url == "rtsp://mediamtx:8554/camera"
     assert settings.rtsp_source_name == "camera-1"
@@ -188,6 +190,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.face_matching_enabled is False
     assert settings.face_match_similarity_threshold == 0.45
     assert settings.face_match_minimum_margin == 0.05
+    assert settings.face_match_unknown_retry_seconds == 2
     assert settings.tracking_enabled is True
     assert settings.tracker_iou_threshold == 0.3
     assert settings.tracker_max_missed_frames == 4
@@ -227,6 +230,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("face_detection_max_input_dimension", 319),
         ("face_match_similarity_threshold", 0),
         ("face_match_minimum_margin", 1.1),
+        ("face_match_unknown_retry_seconds", 0),
     ],
 )
 def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:

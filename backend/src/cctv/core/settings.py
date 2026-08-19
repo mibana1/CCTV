@@ -92,6 +92,7 @@ class Settings(BaseSettings):
     face_matching_enabled: bool = False
     face_match_similarity_threshold: float = Field(default=0.45, gt=0, le=1)
     face_match_minimum_margin: float = Field(default=0.05, ge=0, le=1)
+    face_match_unknown_retry_seconds: float = Field(default=2.0, gt=0, le=300)
     model_classes_path: Path | None = None
     local_video_path: Path | None = None
     rtsp_input_url: str | None = None

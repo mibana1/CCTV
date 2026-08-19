@@ -11,7 +11,8 @@ from math import isfinite, sqrt
 from typing import Protocol
 
 from cctv.db import IdentityEmbeddingVector
-from cctv.identity.face import DetectedFaceEmbedding
+from cctv.identity.face import DetectedFaceEmbedding, FaceBounds
+from cctv.inference import FrameDetections
 from cctv.media import DecodedFrame
 
 logger = logging.getLogger(__name__)
@@ -112,6 +113,17 @@ class FaceMatchingRunSummary:
     unknown_faces: int
     best_similarity: float | None
     matched_identity_counts: dict[str, int]
+    track_cache_enabled: bool = False
+    tracked_person_detections: int = 0
+    face_analysis_attempts: int = 0
+    cache_hits: int = 0
+    cached_tracks: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class _TrackFaceMatchCacheEntry:
+    analyzed_at_seconds: float
+    decision: FaceMatchDecision | None
 
 
 class FaceIdentityMatcher:
@@ -197,10 +209,14 @@ class FaceMatchingConsumer:
         matcher: FaceIdentityMatcher,
         *,
         source_name: str,
+        unknown_retry_seconds: float = 2.0,
     ) -> None:
+        if not isfinite(unknown_retry_seconds) or unknown_retry_seconds <= 0:
+            raise ValueError("unknown_retry_seconds must be a finite number greater than zero")
         self.extractor = extractor
         self.matcher = matcher
         self.source_name = source_name
+        self.unknown_retry_seconds = float(unknown_retry_seconds)
         self.processed_frames = 0
         self.frames_with_faces = 0
         self.detected_faces = 0
@@ -209,15 +225,149 @@ class FaceMatchingConsumer:
         self.best_similarity: float | None = None
         self.matched_identity_counts: defaultdict[str, int] = defaultdict(int)
         self.last_observations: tuple[FaceMatchObservation, ...] = ()
+        self.tracked_person_detections = 0
+        self.face_analysis_attempts = 0
+        self.cache_hits = 0
+        self._track_cache_enabled = False
+        self._track_cache: dict[int, _TrackFaceMatchCacheEntry] = {}
 
     def __call__(self, frame: DecodedFrame) -> None:
+        """Match all faces without object-track caching."""
         self.processed_frames += 1
+        self.face_analysis_attempts += 1
         detected_faces = self.extractor.extract_many(
             frame.image,
             source_name=f"{self.source_name}:sample-{frame.sample_index}",
         )
         if detected_faces:
             self.frames_with_faces += 1
+        self.last_observations = self._evaluate_faces(frame, detected_faces)
+
+    def process_tracked(
+        self,
+        frame: DecodedFrame,
+        result: FrameDetections,
+        *,
+        active_track_ids: Collection[int],
+    ) -> None:
+        """Match person tracks once and reuse accepted results while each track is active."""
+        if result.source_index != frame.source_index or result.sample_index != frame.sample_index:
+            raise ValueError("tracked detections must belong to the decoded frame")
+        self.processed_frames += 1
+        self._track_cache_enabled = True
+        active_ids = set(active_track_ids)
+        for cached_track_id in tuple(self._track_cache):
+            if cached_track_id not in active_ids:
+                del self._track_cache[cached_track_id]
+
+        observations: list[FaceMatchObservation] = []
+        frame_has_face = False
+        person_detections = tuple(
+            detection
+            for detection in result.detections
+            if detection.label.casefold() == "person" and detection.track_id is not None
+        )
+        self.tracked_person_detections += len(person_detections)
+        for detection in person_detections:
+            track_id = detection.track_id
+            if track_id is None:
+                continue
+            cached = self._track_cache.get(track_id)
+            if cached is not None and not self._should_reanalyze(
+                cached,
+                timestamp_seconds=frame.timestamp_seconds,
+            ):
+                self.cache_hits += 1
+                self._log_cache_hit(frame, track_id, cached)
+                continue
+
+            self.face_analysis_attempts += 1
+            x1 = max(0, min(detection.box.x1, frame.image.shape[1]))
+            y1 = max(0, min(detection.box.y1, frame.image.shape[0]))
+            x2 = max(x1, min(detection.box.x2, frame.image.shape[1]))
+            y2 = max(y1, min(detection.box.y2, frame.image.shape[0]))
+            if x2 <= x1 or y2 <= y1:
+                detected_faces: tuple[DetectedFaceEmbedding, ...] = ()
+            else:
+                detected_faces = self.extractor.extract_many(
+                    frame.image[y1:y2, x1:x2],
+                    source_name=(
+                        f"{self.source_name}:sample-{frame.sample_index}:track-{track_id}"
+                    ),
+                )
+            if not detected_faces:
+                self._track_cache[track_id] = _TrackFaceMatchCacheEntry(
+                    analyzed_at_seconds=frame.timestamp_seconds,
+                    decision=None,
+                )
+                logger.debug(
+                    "Tracked person face was not detected",
+                    extra={
+                        "event": "tracked_person_face_not_detected",
+                        "source_name": self.source_name,
+                        "source_index": frame.source_index,
+                        "sample_index": frame.sample_index,
+                        "timestamp_seconds": frame.timestamp_seconds,
+                        "track_id": track_id,
+                        "retry_after_seconds": self.unknown_retry_seconds,
+                    },
+                )
+                continue
+
+            frame_has_face = True
+            selected_face = max(
+                detected_faces,
+                key=lambda face: (
+                    face.bounds.width * face.bounds.height,
+                    face.detection_confidence,
+                ),
+            )
+            frame_face = DetectedFaceEmbedding(
+                bounds=FaceBounds(
+                    x=selected_face.bounds.x + x1,
+                    y=selected_face.bounds.y + y1,
+                    width=selected_face.bounds.width,
+                    height=selected_face.bounds.height,
+                ),
+                vector=selected_face.vector,
+                detection_confidence=selected_face.detection_confidence,
+            )
+            track_observations = self._evaluate_faces(
+                frame,
+                (frame_face,),
+                track_id=track_id,
+            )
+            observations.extend(track_observations)
+            self._track_cache[track_id] = _TrackFaceMatchCacheEntry(
+                analyzed_at_seconds=frame.timestamp_seconds,
+                decision=track_observations[0].decision,
+            )
+        if frame_has_face:
+            self.frames_with_faces += 1
+        self.last_observations = tuple(observations)
+
+    def _should_reanalyze(
+        self,
+        cached: _TrackFaceMatchCacheEntry,
+        *,
+        timestamp_seconds: float,
+    ) -> bool:
+        if cached.decision is not None and cached.decision.matched:
+            return False
+        return timestamp_seconds - cached.analyzed_at_seconds >= self.unknown_retry_seconds
+
+    def get_cached_decision(self, track_id: int) -> FaceMatchDecision | None:
+        """Return the latest recognition decision for an active track, if a face was found."""
+        cached = self._track_cache.get(track_id)
+        return cached.decision if cached is not None else None
+
+    def _evaluate_faces(
+        self,
+        frame: DecodedFrame,
+        detected_faces: Sequence[DetectedFaceEmbedding],
+        *,
+        track_id: int | None = None,
+    ) -> tuple[FaceMatchObservation, ...]:
         observations: list[FaceMatchObservation] = []
         for face_index, face in enumerate(detected_faces):
             decision = self.matcher.match(face.vector)
@@ -249,6 +399,7 @@ class FaceMatchingConsumer:
                     "sample_index": frame.sample_index,
                     "timestamp_seconds": frame.timestamp_seconds,
                     "face_index": face_index,
+                    "track_id": track_id,
                     "face_bounds": {
                         "x": face.bounds.x,
                         "y": face.bounds.y,
@@ -270,7 +421,39 @@ class FaceMatchingConsumer:
                     "minimum_margin": decision.minimum_margin,
                 },
             )
-        self.last_observations = tuple(observations)
+        return tuple(observations)
+
+    def _log_cache_hit(
+        self,
+        frame: DecodedFrame,
+        track_id: int,
+        cached: _TrackFaceMatchCacheEntry,
+    ) -> None:
+        decision = cached.decision
+        logger.debug(
+            "Tracked face match reused from cache",
+            extra={
+                "event": "tracked_face_match_cache_hit",
+                "source_name": self.source_name,
+                "source_index": frame.source_index,
+                "sample_index": frame.sample_index,
+                "timestamp_seconds": frame.timestamp_seconds,
+                "track_id": track_id,
+                "cache_age_seconds": round(
+                    frame.timestamp_seconds - cached.analyzed_at_seconds,
+                    6,
+                ),
+                "match_status": (
+                    decision.status if decision is not None else FaceMatchStatus.UNKNOWN
+                ),
+                "rejection_reason": (
+                    decision.rejection_reason if decision is not None else "face_not_detected"
+                ),
+                "identity_id": decision.identity_id if decision is not None else None,
+                "external_id": decision.external_id if decision is not None else None,
+                "display_name": decision.display_name if decision is not None else None,
+            },
+        )
 
     @property
     def summary(self) -> FaceMatchingRunSummary:
@@ -286,6 +469,11 @@ class FaceMatchingConsumer:
             unknown_faces=self.unknown_faces,
             best_similarity=self.best_similarity,
             matched_identity_counts=dict(sorted(self.matched_identity_counts.items())),
+            track_cache_enabled=self._track_cache_enabled,
+            tracked_person_detections=self.tracked_person_detections,
+            face_analysis_attempts=self.face_analysis_attempts,
+            cache_hits=self.cache_hits,
+            cached_tracks=len(self._track_cache),
         )
 
 
