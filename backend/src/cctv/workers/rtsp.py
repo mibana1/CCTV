@@ -30,7 +30,13 @@ from cctv.identity import (
     create_resolving_face_observation_sink,
     create_sface_matching_consumer,
 )
-from cctv.inference import DetectorConfig, IoUTracker, ObjectDetector, create_detector
+from cctv.inference import (
+    DetectorConfig,
+    IoUTracker,
+    ObjectDetector,
+    create_detector,
+    filter_detections_by_class,
+)
 from cctv.media import (
     DecodedFrame,
     RtspStreamReader,
@@ -333,6 +339,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         repository: DetectionRepository | None = None
         rule_engine: RuleEngine | None = None
         emitted_rule_events = 0
+        filtered_out_detections = 0
         hiperwall_planner: HiperwallDryRunPlanner | None = None
         simulated_hiperwall_actions = 0
         analysis_run: AnalysisRunRecord | None = None
@@ -363,6 +370,7 @@ def run(argv: Sequence[str] | None = None) -> None:
                     iou_threshold=settings.tracker_iou_threshold,
                     max_missed_frames=settings.tracker_max_missed_frames,
                     max_idle_seconds=settings.tracker_max_idle_seconds,
+                    tracked_class_names=settings.tracker_class_name_list,
                 )
             if settings.persist_detections:
                 initialize_database(settings.database_path)
@@ -416,9 +424,18 @@ def run(argv: Sequence[str] | None = None) -> None:
                 )
 
             def analyze_frame(frame: DecodedFrame) -> None:
-                nonlocal emitted_rule_events, simulated_hiperwall_actions
+                nonlocal emitted_rule_events
+                nonlocal filtered_out_detections
+                nonlocal simulated_hiperwall_actions
 
-                result = detector.analyze(frame)
+                raw_result = detector.analyze(frame)
+                result = filter_detections_by_class(
+                    raw_result,
+                    settings.detection_class_name_list,
+                )
+                filtered_out_detections += len(raw_result.detections) - len(
+                    result.detections
+                )
                 if tracker is not None:
                     result = tracker.update(result)
                     if face_matching_consumer is not None:
@@ -569,6 +586,11 @@ def run(argv: Sequence[str] | None = None) -> None:
                 analysis_run.id if analysis_run is not None else None
             )
             output["analysis"]["tracking_enabled"] = tracker is not None
+            output["analysis"]["detection_class_names"] = (
+                settings.detection_class_name_list
+            )
+            output["analysis"]["tracker_class_names"] = settings.tracker_class_name_list
+            output["analysis"]["filtered_out_detections"] = filtered_out_detections
             output["analysis"]["tracking"] = (
                 asdict(tracker.summary) if tracker is not None else None
             )

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from dataclasses import dataclass, replace
 from math import isfinite
 
@@ -39,8 +40,9 @@ class IoUTracker:
         self,
         *,
         iou_threshold: float = 0.3,
-        max_missed_frames: int = 4,
-        max_idle_seconds: float = 3.0,
+        max_missed_frames: int = 10,
+        max_idle_seconds: float = 12.0,
+        tracked_class_names: Collection[str] | None = None,
     ) -> None:
         if not isfinite(iou_threshold) or not 0 < iou_threshold <= 1:
             raise ValueError("iou_threshold must be a finite number between 0 and 1")
@@ -48,10 +50,20 @@ class IoUTracker:
             raise ValueError("max_missed_frames must be zero or greater")
         if not isfinite(max_idle_seconds) or max_idle_seconds <= 0:
             raise ValueError("max_idle_seconds must be a finite number greater than zero")
+        normalized_class_names = (
+            frozenset(name.strip().casefold() for name in tracked_class_names)
+            if tracked_class_names is not None
+            else None
+        )
+        if normalized_class_names is not None and (
+            not normalized_class_names or "" in normalized_class_names
+        ):
+            raise ValueError("tracked_class_names must contain non-empty class names")
 
         self.iou_threshold = float(iou_threshold)
         self.max_missed_frames = max_missed_frames
         self.max_idle_seconds = float(max_idle_seconds)
+        self.tracked_class_names = normalized_class_names
         self._tracks: dict[int, _Track] = {}
         self._next_track_id = 1
         self._processed_frames = 0
@@ -84,6 +96,8 @@ class IoUTracker:
 
         candidates: list[tuple[float, int, int]] = []
         for detection_index, detection in enumerate(result.detections):
+            if not self._is_trackable(detection):
+                continue
             for track_id, track in self._tracks.items():
                 if track.class_id != detection.class_id:
                     continue
@@ -113,6 +127,9 @@ class IoUTracker:
 
         tracked_detections: list[Detection] = []
         for detection_index, detection in enumerate(result.detections):
+            if not self._is_trackable(detection):
+                tracked_detections.append(replace(detection, track_id=None))
+                continue
             track_id = assignments.get(detection_index)
             if track_id is None:
                 track_id = self._next_track_id
@@ -133,10 +150,18 @@ class IoUTracker:
             tracked_detections.append(replace(detection, track_id=track_id))
 
         self._processed_frames += 1
-        self._assigned_detections += len(tracked_detections)
+        self._assigned_detections += sum(
+            detection.track_id is not None for detection in tracked_detections
+        )
         self._last_sample_index = result.sample_index
         self._last_timestamp_seconds = result.timestamp_seconds
         return replace(result, detections=tuple(tracked_detections))
+
+    def _is_trackable(self, detection: Detection) -> bool:
+        return (
+            self.tracked_class_names is None
+            or detection.label.strip().casefold() in self.tracked_class_names
+        )
 
     def _validate_order(self, result: FrameDetections) -> None:
         if self._last_sample_index is not None and result.sample_index <= self._last_sample_index:

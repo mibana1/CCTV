@@ -21,7 +21,7 @@ class TrackIdentityResolver:
         self,
         repository: PersonInstanceRepository,
         *,
-        max_gap_seconds: float = 5.0,
+        max_gap_seconds: float = 12.0,
         minimum_candidate_similarity: float = 0.35,
         max_center_distance_ratio: float = 6.0,
     ) -> None:
@@ -165,18 +165,16 @@ class TrackIdentityResolver:
         candidate: PersonInstanceRecord,
         event: FaceMatchEventRecord,
     ) -> float | None:
-        gap = event.source_timestamp_seconds - candidate.last_seen_timestamp_seconds
+        last_observed_at = self.repository.get_last_observed_timestamp_seconds(
+            candidate.id
+        )
+        gap = event.source_timestamp_seconds - last_observed_at
+        if gap < 0 or gap > self.max_gap_seconds:
+            return None
         candidate_similarity_is_strong = (
             min(candidate.best_similarity, event.best_similarity)
             >= self.minimum_candidate_similarity
         )
-        allowed_gap = (
-            self.max_gap_seconds
-            if candidate_similarity_is_strong
-            else min(self.max_gap_seconds, 2.0)
-        )
-        if gap < 0 or gap > allowed_gap:
-            return None
         candidate_x = candidate.last_face_x + candidate.last_face_width / 2
         candidate_y = candidate.last_face_y + candidate.last_face_height / 2
         event_x = event.face_x + event.face_width / 2
@@ -188,14 +186,19 @@ class TrackIdentityResolver:
             event.face_height,
         )
         distance_ratio = hypot(event_x - candidate_x, event_y - candidate_y) / scale
-        allowed_distance_ratio = (
-            self.max_center_distance_ratio
-            if candidate_similarity_is_strong
-            else self.max_center_distance_ratio * (2 / 3)
-        )
+        short_gap_seconds = min(self.max_gap_seconds, 2.0)
+        if candidate_similarity_is_strong:
+            allowed_distance_ratio = self.max_center_distance_ratio
+        elif gap <= short_gap_seconds:
+            allowed_distance_ratio = self.max_center_distance_ratio * (2 / 3)
+        else:
+            # Weak face candidates can bridge decoder/detector gaps only when the
+            # person remains in nearly the same image location. This keeps one
+            # stationary person stable without broadly merging nearby strangers.
+            allowed_distance_ratio = self.max_center_distance_ratio / 4
         if distance_ratio > allowed_distance_ratio:
             return None
-        return distance_ratio + gap / allowed_gap
+        return distance_ratio + gap / self.max_gap_seconds
 
     @staticmethod
     def _log_resolution(

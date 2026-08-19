@@ -15,6 +15,7 @@ from cctv.media.decode import DecodedFrame
 logger = logging.getLogger(__name__)
 
 _UNSAFE_RUN_NAME = re.compile(r"[^\w.-]+", flags=re.UNICODE)
+_SNAPSHOT_SAMPLE_INDEX = re.compile(r"^sample_(\d+)_")
 
 
 class SnapshotError(RuntimeError):
@@ -162,3 +163,9 @@ def build_snapshot_run_directory(
     return (
         Path(snapshot_root).expanduser().resolve() / f"{source_name}_{timestamp}_{uuid4().hex[:8]}"
     )
+
+
+def sample_index_from_snapshot_name(name: str) -> int | None:
+    """Extract the sampled-frame index from a writer-generated JPEG name."""
+    match = _SNAPSHOT_SAMPLE_INDEX.match(name)
+    return int(match.group(1)) if match is not None else None

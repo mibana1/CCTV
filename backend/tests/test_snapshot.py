@@ -7,9 +7,12 @@ import pytest
 from cctv.media import (
     DecodedFrame,
     SnapshotEncodingError,
+    SnapshotOverlay,
     SnapshotWriteError,
     SnapshotWriter,
     build_snapshot_run_directory,
+    render_snapshot_annotations,
+    sample_index_from_snapshot_name,
 )
 
 
@@ -94,3 +97,43 @@ def test_build_snapshot_run_directory_is_unique_and_source_named(tmp_path: Path)
     assert first != second
     assert not first.exists()
     assert not second.exists()
+
+
+def test_snapshot_annotation_draws_tracking_and_person_labels(tmp_path: Path) -> None:
+    writer = SnapshotWriter(tmp_path / "run", jpeg_quality=100)
+    record = writer.save(make_frame())
+
+    rendered = render_snapshot_annotations(
+        record.path,
+        (
+            SnapshotOverlay(
+                x1=3,
+                y1=3,
+                x2=28,
+                y2=21,
+                primary_label="person 0.91 | Track 27",
+                secondary_label="Person 0dd07e6a | MATCHED",
+                color=(42, 190, 80),
+            ),
+        ),
+        jpeg_quality=100,
+    )
+
+    decoded = cv2.imdecode(np.frombuffer(rendered, dtype=np.uint8), cv2.IMREAD_COLOR)
+    original = cv2.imread(str(record.path))
+    assert decoded is not None
+    assert original is not None
+    assert decoded.shape == original.shape
+    assert not np.array_equal(decoded, original)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("sample_000123_frame_000000456_t000000500ms.jpg", 123),
+        ("sample.jpg", None),
+        ("other_000123.jpg", None),
+    ],
+)
+def test_sample_index_from_snapshot_name(name: str, expected: int | None) -> None:
+    assert sample_index_from_snapshot_name(name) == expected

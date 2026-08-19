@@ -159,6 +159,10 @@ def test_repository_filters_and_paginates_detections(tmp_path: Path) -> None:
         class_name="PERSON",
         min_confidence=0.5,
     )
+    sampled = repository.list_detections(
+        analysis_run_id=first_run.id,
+        sample_index=0,
+    )
     tracked = repository.list_detections(analysis_run_id=first_run.id, track_id=1)
     failed_runs = repository.list_analysis_runs(status=AnalysisRunStatus.FAILED)
 
@@ -167,6 +171,7 @@ def test_repository_filters_and_paginates_detections(tmp_path: Path) -> None:
     assert len(second_page.items) == 2
     assert filtered.total == 1
     assert filtered.items[0].confidence == pytest.approx(0.9)
+    assert sampled.total == 3
     assert tracked.total == 1
     assert tracked.items[0].track_id == 1
     assert failed_runs.total == 1
@@ -218,6 +223,8 @@ def test_repository_requires_run_when_filtering_by_track(tmp_path: Path) -> None
 
     with pytest.raises(ValueError, match="analysis_run_id is required"):
         repository.list_detections(track_id=1)
+    with pytest.raises(ValueError, match="analysis_run_id is required"):
+        repository.list_detections(sample_index=0)
 
 
 def test_repository_rolls_back_track_class_mismatch(tmp_path: Path) -> None:

@@ -191,10 +191,11 @@ docker compose --profile rtsp run --rm --build rtsp-worker \
 
 환경변수 `CCTV_FACE_MATCHING_ENABLED=true`로 항상 켤 수도 있고,
 `CCTV_FACE_MATCH_SIMILARITY_THRESHOLD`와 `CCTV_FACE_MATCH_MINIMUM_MARGIN`으로
-판정 기준을 조정할 수 있습니다. 끊어진 트랙 연결은 후보 유사도 0.35 이상이면
-기본 5초·얼굴 중심 이동 거리 비율 6 이내에서 허용합니다. 그보다 낮은 점수는
-얼굴 판정을 matched로 바꾸지 않고, 2초·거리 비율 4 이내의 강한 이동 연속성이
-확인될 때만 unknown 인스턴스 연결에 사용합니다. 각각
+판정 기준을 조정할 수 있습니다. 끊어진 트랙 연결은 마지막 얼굴 이벤트가 아니라
+연결된 객체 트랙의 마지막 검출 시간을 기준으로 판단합니다. 후보 유사도 0.35 이상이면
+기본 12초·얼굴 중심 이동 거리 비율 6 이내에서 허용합니다. 그보다 낮은 점수는 2초 이내면
+거리 비율 4까지 허용하고, 더 긴 공백은 거리 비율 1.5 이내에 머무른 경우에만
+unknown 인스턴스를 연결합니다. 이 연결은 얼굴 판정을 matched로 바꾸지 않습니다. 각각
 `CCTV_FACE_IDENTITY_STITCH_MAX_GAP_SECONDS`,
 `CCTV_FACE_IDENTITY_STITCH_MIN_SIMILARITY`,
 `CCTV_FACE_IDENTITY_STITCH_MAX_DISTANCE_RATIO`로 조정할 수 있습니다.
@@ -238,6 +239,19 @@ MediaMTX Control API는 `127.0.0.1:9997`에만 바인딩합니다. 내부 전용
 하나만 허용됩니다. CPU·메모리는 Linux `/proc`에서 수집하고 SSE로 진행 상태와
 얼굴 판정 이벤트를 전달합니다. 운영·LIVE 모드 또는 원격 Host에서는 모든 테스트
 제어·스냅샷·얼굴 이벤트 엔드포인트가 HTTP 403을 반환합니다.
+
+스냅샷 썸네일이나 얼굴 결과의 `박스 보기`를 선택하면 원본 JPEG 위에 설정된 추적
+클래스의 박스와 `Track <id>`를 표시합니다. 사람 박스에는
+`Person <person_instance_id 앞 8자리>`도 표시합니다. 이 이미지는
+`GET /test-sessions/{session_id}/snapshots/{name}/annotated`가 현재 DB 상태를 기준으로
+요청할 때마다 생성합니다. 따라서 resolver가 끊어진 트랙을 병합한 뒤 다시 열면
+서로 다른 Track ID에도 같은 Person ID가 나타나며, 원본 파일은 변경되지 않습니다.
+
+`CCTV_DETECTION_CLASS_NAMES`는 추론 후 유지·저장할 클래스를 쉼표로 지정하며 기본값은
+`person,car,cat,dog`입니다. `CCTV_TRACKER_CLASS_NAMES`는 그중 Track ID를 부여할
+부분집합이며 기본값은 `person`입니다. `person,car,cat,dog`를 모두 추적하려면 두 값을
+같게 지정합니다. 검출 필터 밖의 클래스는 DB·규칙·주석에서 제외되지만, YOLO 모델의
+전체 클래스 계산 자체는 그대로 수행합니다.
 
 객체 분석과 추적을 함께 켜면 얼굴 분석은 `person` 검출 박스 단위로 실행되고
 결과를 `track_id`에 캐시합니다. `matched` 결과는 해당 트랙이 활성 상태인 동안

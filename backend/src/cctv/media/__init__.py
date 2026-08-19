@@ -7,6 +7,7 @@ not.
 See ``docs/architecture/MEDIA_PIPELINE.md`` before adding implementations.
 """
 
+from cctv.media.annotation import SnapshotOverlay, render_snapshot_annotations
 from cctv.media.decode import (
     DecodedFrame,
     LocalVideoDecodeError,
@@ -30,6 +31,7 @@ from cctv.media.snapshot import (
     SnapshotWriteError,
     SnapshotWriter,
     build_snapshot_run_directory,
+    sample_index_from_snapshot_name,
 )
 
 __all__ = [
@@ -45,10 +47,13 @@ __all__ = [
     "RtspStreamReader",
     "SnapshotEncodingError",
     "SnapshotError",
+    "SnapshotOverlay",
     "SnapshotRecord",
     "SnapshotWriteError",
     "SnapshotWriter",
     "VideoMetadata",
     "build_snapshot_run_directory",
     "iter_local_video_frames",
+    "render_snapshot_annotations",
+    "sample_index_from_snapshot_name",
 ]

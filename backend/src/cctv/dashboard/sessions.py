@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from cctv.core.settings import Settings
 from cctv.db import DetectionRepository
+from cctv.media import sample_index_from_snapshot_name
 
 
 class TestSessionStatus(StrEnum):
@@ -253,7 +254,7 @@ class TestSessionManager:
             items.append(
                 SnapshotInfo(
                     name=path.name,
-                    sample_index=_sample_index_from_name(path.name),
+                    sample_index=sample_index_from_snapshot_name(path.name),
                     size_bytes=path.stat().st_size,
                 )
             )
@@ -342,7 +343,9 @@ class TestSessionManager:
                 "CCTV_DETECTOR_NMS_THRESHOLD": str(
                     self.settings.effective_detector_nms_threshold
                 ),
+                "CCTV_DETECTION_CLASS_NAMES": self.settings.detection_class_names,
                 "CCTV_TRACKING_ENABLED": str(self.settings.tracking_enabled).lower(),
+                "CCTV_TRACKER_CLASS_NAMES": self.settings.tracker_class_names,
                 "CCTV_PERSIST_DETECTIONS": "true",
                 "CCTV_RULES_ENABLED": str(self.settings.rules_enabled).lower(),
                 "CCTV_HIPERWALL_DRY_RUN_ENABLED": str(
@@ -730,14 +733,6 @@ def _maximum(previous: float | None, current: float | None) -> float | None:
     if current is None:
         return previous
     return current if previous is None else max(previous, current)
-
-
-def _sample_index_from_name(name: str) -> int | None:
-    prefix = "sample_"
-    if not name.startswith(prefix):
-        return None
-    value = name[len(prefix) :].split("_", 1)[0]
-    return int(value) if value.isdigit() else None
 
 
 def _system_configuration(name: str, fallback: float) -> float:

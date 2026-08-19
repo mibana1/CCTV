@@ -466,14 +466,20 @@ class DetectionRepository:
         page: int = 1,
         limit: int = DEFAULT_PAGE_SIZE,
         analysis_run_id: str | None = None,
+        sample_index: int | None = None,
         track_id: int | None = None,
         class_name: str | None = None,
         min_confidence: float | None = None,
     ) -> DetectionPage:
-        """Query detections by run, per-run track, class, and minimum confidence."""
+        """Query detections by run, sample, per-run track, class, and confidence."""
         _validate_pagination(page, limit)
         if min_confidence is not None and not 0 <= min_confidence <= 1:
             raise ValueError("min_confidence must be between 0 and 1")
+        if sample_index is not None:
+            if sample_index < 0:
+                raise ValueError("sample_index must be zero or greater")
+            if analysis_run_id is None:
+                raise ValueError("analysis_run_id is required when filtering by sample_index")
         if track_id is not None:
             if track_id < 1:
                 raise ValueError("track_id must be at least 1")
@@ -485,6 +491,9 @@ class DetectionRepository:
         if analysis_run_id is not None:
             clauses.append("frame.analysis_run_id = ?")
             parameters.append(analysis_run_id)
+        if sample_index is not None:
+            clauses.append("frame.sample_index = ?")
+            parameters.append(sample_index)
         if track_id is not None:
             clauses.append("detection.track_id = ?")
             parameters.append(track_id)

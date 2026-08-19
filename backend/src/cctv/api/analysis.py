@@ -188,20 +188,22 @@ def list_detections(
     page: PageNumber = 1,
     limit: PageLimit = DEFAULT_PAGE_SIZE,
     analysis_run_id: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
+    sample_index: Annotated[int | None, Query(ge=0)] = None,
     track_id: Annotated[int | None, Query(ge=1)] = None,
     class_name: Annotated[str | None, Query(min_length=1, max_length=128)] = None,
     min_confidence: Annotated[float | None, Query(ge=0, le=1)] = None,
 ) -> DetectionPageResponse:
     """Query detections by execution, per-run track, class, and confidence."""
-    if track_id is not None and analysis_run_id is None:
+    if (sample_index is not None or track_id is not None) and analysis_run_id is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="analysis_run_id is required when filtering by track_id",
+            detail="analysis_run_id is required when filtering by sample_index or track_id",
         )
     result = _repository(request).list_detections(
         page=page,
         limit=limit,
         analysis_run_id=analysis_run_id,
+        sample_index=sample_index,
         track_id=track_id,
         class_name=class_name,
         min_confidence=min_confidence,

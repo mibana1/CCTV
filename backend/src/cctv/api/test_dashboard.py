@@ -29,8 +29,16 @@ from cctv.db import (
     MAX_PAGE_SIZE,
     CameraRecord,
     CameraRepository,
+    DetectionRepository,
     FaceMatchEventRecord,
     FaceMatchRepository,
+    PersonInstanceRepository,
+)
+from cctv.media import (
+    SnapshotEncodingError,
+    SnapshotOverlay,
+    render_snapshot_annotations,
+    sample_index_from_snapshot_name,
 )
 
 router = APIRouter(tags=["test-dashboard"])
@@ -80,6 +88,7 @@ class SnapshotResponse(BaseModel):
     sample_index: int | None
     size_bytes: int
     url: str
+    annotated_url: str
 
 
 class SnapshotListResponse(BaseModel):
@@ -500,6 +509,9 @@ def list_test_snapshots(
             SnapshotResponse(
                 **asdict(item),
                 url=f"/test-sessions/{session_id}/snapshots/{item.name}",
+                annotated_url=(
+                    f"/test-sessions/{session_id}/snapshots/{item.name}/annotated"
+                ),
             )
             for item in snapshots
         ]
@@ -518,6 +530,75 @@ def get_test_snapshot(
     except (SessionNotFoundError, FileNotFoundError) as error:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="snapshot not found") from error
     return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.get(
+    "/test-sessions/{session_id}/snapshots/{name}/annotated",
+    response_class=Response,
+)
+def get_annotated_test_snapshot(
+    request: Request,
+    session_id: str,
+    name: str,
+    _: TestAccess,
+) -> Response:
+    """Render a source snapshot using the latest track-to-person associations."""
+    manager = _manager(request)
+    try:
+        session = manager.get(session_id)
+        path = manager.snapshot_path(session_id, name)
+    except (SessionNotFoundError, FileNotFoundError) as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="snapshot not found") from error
+
+    sample_index = sample_index_from_snapshot_name(name)
+    if session.analysis_run_id is None or sample_index is None:
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+    database_path = request.app.state.database.path
+    detections = DetectionRepository(database_path).list_detections(
+        analysis_run_id=session.analysis_run_id,
+        sample_index=sample_index,
+        page=1,
+        limit=MAX_PAGE_SIZE,
+    )
+    tracked_class_names = request.app.state.settings.tracker_class_name_set
+    tracked_detections = tuple(
+        item
+        for item in detections.items
+        if item.track_id is not None
+        and item.class_name.strip().casefold() in tracked_class_names
+    )
+    track_ids = {
+        item.track_id for item in tracked_detections if item.track_id is not None
+    }
+    people_by_track = PersonInstanceRepository(database_path).get_by_tracks(
+        session.analysis_run_id,
+        track_ids,
+    )
+    overlays = tuple(
+        _snapshot_overlay(item, people_by_track.get(item.track_id))
+        for item in tracked_detections
+    )
+    try:
+        content = render_snapshot_annotations(
+            path,
+            overlays,
+            jpeg_quality=request.app.state.settings.snapshot_jpeg_quality,
+        )
+    except SnapshotEncodingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    return Response(
+        content=content,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store",
+            "X-CCTV-Detection-Count": str(len(overlays)),
+            "X-CCTV-Person-Count": str(len(people_by_track)),
+        },
+    )
 
 
 @router.get("/face-match-events", response_model=FaceMatchEventPageResponse)
@@ -605,6 +686,28 @@ def _face_event_response(record: FaceMatchEventRecord) -> FaceMatchEventResponse
             width=record.face_width,
             height=record.face_height,
         ),
+    )
+
+
+def _snapshot_overlay(record, person) -> SnapshotOverlay:
+    primary_label = f"{record.class_name} {record.confidence:.2f}"
+    if record.track_id is not None:
+        primary_label += f" | Track {record.track_id}"
+    secondary_label = None
+    color = (150, 150, 150)
+    if person is not None:
+        secondary_label = f"Person {person.id[:8]} | {person.status.upper()}"
+        color = (42, 190, 80) if person.status == "matched" else (0, 184, 255)
+    elif record.track_id is not None:
+        color = (255, 140, 0)
+    return SnapshotOverlay(
+        x1=record.x1,
+        y1=record.y1,
+        x2=record.x2,
+        y2=record.y2,
+        primary_label=primary_label,
+        secondary_label=secondary_label,
+        color=color,
     )
 
 

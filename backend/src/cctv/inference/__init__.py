@@ -9,6 +9,7 @@ from cctv.inference.factory import (
     built_in_detector_factory,
     create_detector,
 )
+from cctv.inference.filtering import filter_detections_by_class
 from cctv.inference.models import (
     BoundingBox,
     Detection,
@@ -48,5 +49,6 @@ __all__ = [
     "YoloRunSummary",
     "built_in_detector_factory",
     "create_detector",
+    "filter_detections_by_class",
     "load_class_names",
 ]

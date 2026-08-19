@@ -26,11 +26,13 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_DETECTOR_INPUT_SIZE", "512")
     monkeypatch.setenv("CCTV_DETECTOR_CONFIDENCE_THRESHOLD", "0.35")
     monkeypatch.setenv("CCTV_DETECTOR_NMS_THRESHOLD", "0.4")
+    monkeypatch.setenv("CCTV_DETECTION_CLASS_NAMES", " Person, CAR, Cat, DOG, person ")
     monkeypatch.setenv("CCTV_YOLO_ENABLED", "true")
     monkeypatch.setenv("CCTV_YOLO_INPUT_SIZE", "320")
     monkeypatch.setenv("CCTV_YOLO_CONFIDENCE_THRESHOLD", "0.4")
     monkeypatch.setenv("CCTV_YOLO_NMS_THRESHOLD", "0.5")
     monkeypatch.setenv("CCTV_TRACKING_ENABLED", "false")
+    monkeypatch.setenv("CCTV_TRACKER_CLASS_NAMES", "PERSON, car")
     monkeypatch.setenv("CCTV_TRACKER_IOU_THRESHOLD", "0.35")
     monkeypatch.setenv("CCTV_TRACKER_MAX_MISSED_FRAMES", "6")
     monkeypatch.setenv("CCTV_TRACKER_MAX_IDLE_SECONDS", "4.5")
@@ -87,12 +89,14 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.effective_detector_input_size == 512
     assert settings.effective_detector_confidence_threshold == 0.35
     assert settings.effective_detector_nms_threshold == 0.4
+    assert settings.detection_class_name_list == ("person", "car", "cat", "dog")
     assert settings.object_detection_enabled is True
     assert settings.yolo_enabled is True
     assert settings.yolo_input_size == 320
     assert settings.yolo_confidence_threshold == 0.4
     assert settings.yolo_nms_threshold == 0.5
     assert settings.tracking_enabled is False
+    assert settings.tracker_class_name_list == ("person", "car")
     assert settings.tracker_iou_threshold == 0.35
     assert settings.tracker_max_missed_frames == 6
     assert settings.tracker_max_idle_seconds == 4.5
@@ -159,6 +163,21 @@ def test_settings_reject_invalid_log_level() -> None:
         Settings(_env_file=None, log_level="verbose")
 
 
+def test_settings_rejects_tracker_classes_outside_detection_filter() -> None:
+    with pytest.raises(ValidationError, match="must be a subset"):
+        Settings(
+            _env_file=None,
+            detection_class_names="person,cat",
+            tracker_class_names="person,car",
+        )
+
+
+@pytest.mark.parametrize("value", ["", "person,,car", "person,car\tpet"])
+def test_settings_rejects_invalid_class_name_lists(value: str) -> None:
+    with pytest.raises(ValidationError, match="class names"):
+        Settings(_env_file=None, detection_class_names=value)
+
+
 def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     for variable in (
         "CCTV_APP_MODE",
@@ -169,12 +188,14 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_DETECTOR_INPUT_SIZE",
         "CCTV_DETECTOR_CONFIDENCE_THRESHOLD",
         "CCTV_DETECTOR_NMS_THRESHOLD",
+        "CCTV_DETECTION_CLASS_NAMES",
         "CCTV_YOLO_ENABLED",
         "CCTV_FACE_MATCHING_ENABLED",
         "CCTV_FACE_IDENTITY_STITCH_MAX_GAP_SECONDS",
         "CCTV_FACE_IDENTITY_STITCH_MIN_SIMILARITY",
         "CCTV_FACE_IDENTITY_STITCH_MAX_DISTANCE_RATIO",
         "CCTV_TRACKING_ENABLED",
+        "CCTV_TRACKER_CLASS_NAMES",
         "CCTV_PERSIST_DETECTIONS",
         "CCTV_HIPERWALL_DRY_RUN_ENABLED",
         "CCTV_LOCAL_VIDEO_PATH",
@@ -191,6 +212,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.effective_detector_input_size == 640
     assert settings.effective_detector_confidence_threshold == 0.25
     assert settings.effective_detector_nms_threshold == 0.45
+    assert settings.detection_class_name_list == ("person", "car", "cat", "dog")
     assert settings.object_detection_enabled is False
     assert settings.yolo_enabled is False
     assert settings.yolo_input_size == 640
@@ -200,13 +222,14 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.face_match_similarity_threshold == 0.45
     assert settings.face_match_minimum_margin == 0.05
     assert settings.face_match_unknown_retry_seconds == 2
-    assert settings.face_identity_stitch_max_gap_seconds == 5
+    assert settings.face_identity_stitch_max_gap_seconds == 12
     assert settings.face_identity_stitch_min_similarity == 0.35
     assert settings.face_identity_stitch_max_distance_ratio == 6
     assert settings.tracking_enabled is True
+    assert settings.tracker_class_name_list == ("person",)
     assert settings.tracker_iou_threshold == 0.3
-    assert settings.tracker_max_missed_frames == 4
-    assert settings.tracker_max_idle_seconds == 3
+    assert settings.tracker_max_missed_frames == 10
+    assert settings.tracker_max_idle_seconds == 12
     assert settings.persist_detections is True
     assert settings.hiperwall_dry_run_enabled is True
     assert settings.local_video_path is None

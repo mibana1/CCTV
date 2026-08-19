@@ -20,8 +20,11 @@ from cctv.db import (
     DetectionRepository,
     FaceMatchEventInput,
     FaceMatchRepository,
+    PersonInstanceRepository,
     initialize_database,
 )
+from cctv.identity import TrackIdentityResolver
+from cctv.inference import BoundingBox, Detection, FrameDetections
 from cctv.main import create_app
 
 
@@ -187,6 +190,7 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
     assert started.json()["max_samples"] == 30
     assert sessions.json()["items"][0]["id"] == "session-1"
     assert snapshots.json()["items"][0]["sample_index"] == 1
+    assert snapshots.json()["items"][0]["annotated_url"].endswith("/annotated")
     assert image.content == b"jpg"
     assert stopped.status_code == 202
     assert stopped.json()["status"] == "stopped"
@@ -209,9 +213,115 @@ def test_dashboard_page_stabilizes_result_refreshes(tmp_path: Path) -> None:
     assert 'document.getElementById("gallery").replaceChildren(fragment);' in page.text
     assert "person-instance-summary" in page.text
     assert "item.person_instance_id" in page.text
+    assert "item.annotated_url" in page.text
+    assert "박스 보기" in page.text
     assert (
         'document.getElementById("face-results").replaceChildren(...replacement.children);'
         in page.text
+    )
+
+
+def test_dashboard_annotation_uses_one_person_id_across_changed_tracks(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    snapshot = tmp_path / "sample_000001_frame_000000001_t000000500ms.jpg"
+    snapshot.write_bytes(b"jpg")
+    manager = FakeSessionManager(snapshot)
+    settings = _settings(tmp_path)
+    rendered_overlays = []
+
+    def fake_renderer(path, overlays, *, jpeg_quality):
+        assert path == snapshot
+        assert jpeg_quality == settings.snapshot_jpeg_quality
+        rendered_overlays.extend(overlays)
+        return b"annotated-jpg"
+
+    monkeypatch.setattr(
+        "cctv.api.test_dashboard.render_snapshot_annotations",
+        fake_renderer,
+    )
+
+    with TestClient(create_app(settings, test_session_manager=manager)) as client:
+        detection_repository = DetectionRepository(settings.database_path)
+        run = detection_repository.create_analysis_run(
+            source_type="rtsp",
+            source_name="camera-1",
+            model_name="model.onnx",
+            model_sha256="a" * 64,
+            device="cpu",
+            input_size=640,
+            confidence_threshold=0.25,
+            nms_threshold=0.45,
+            sample_fps=2,
+        )
+        for sample_index, track_id in ((1, 7), (2, 9)):
+            detection_repository.save_frame(
+                run.id,
+                FrameDetections(
+                    source_index=sample_index,
+                    sample_index=sample_index,
+                    timestamp_seconds=sample_index * 0.5,
+                    frame_width=640,
+                    frame_height=360,
+                    inference_seconds=0.01,
+                    detections=(
+                        Detection(
+                            class_id=0,
+                            label="person",
+                            confidence=0.91,
+                            box=BoundingBox(x1=20, y1=30, x2=220, y2=330),
+                            track_id=track_id,
+                        ),
+                    ),
+                ),
+            )
+
+        face_repository = FaceMatchRepository(settings.database_path)
+        person_repository = PersonInstanceRepository(settings.database_path)
+        resolver = TrackIdentityResolver(person_repository)
+        for sample_index, track_id in ((1, 7), (2, 9)):
+            event = face_repository.save_event(
+                run.id,
+                FaceMatchEventInput(
+                    source_index=sample_index,
+                    sample_index=sample_index,
+                    source_timestamp_seconds=sample_index * 0.5,
+                    face_index=0,
+                    track_id=track_id,
+                    face_x=70,
+                    face_y=50,
+                    face_width=60,
+                    face_height=60,
+                    detection_confidence=0.9,
+                    match_status="matched",
+                    rejection_reason=None,
+                    identity_id="emp-001",
+                    external_id="EMP-001",
+                    display_name="Test Person",
+                    best_candidate_identity_id="emp-001",
+                    best_candidate_external_id="EMP-001",
+                    best_similarity=0.61,
+                    second_best_similarity=None,
+                    similarity_threshold=0.45,
+                    minimum_margin=0.05,
+                ),
+            )
+            resolver.resolve(event)
+
+        people = person_repository.get_by_tracks(run.id, {7, 9})
+        manager.session = replace(manager.session, analysis_run_id=run.id)
+        snapshots = client.get("/test-sessions/session-1/snapshots")
+        annotated = client.get(snapshots.json()["items"][0]["annotated_url"])
+
+    assert people[7].id == people[9].id
+    assert annotated.status_code == 200
+    assert annotated.content == b"annotated-jpg"
+    assert annotated.headers["x-cctv-person-count"] == "1"
+    assert len(rendered_overlays) == 1
+    assert rendered_overlays[0].primary_label == "person 0.91 | Track 7"
+    assert rendered_overlays[0].secondary_label == (
+        f"Person {people[7].id[:8]} | MATCHED"
     )
 
 

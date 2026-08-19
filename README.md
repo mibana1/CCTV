@@ -135,6 +135,7 @@ POST /test-sessions/{session_id}/stop
 GET  /test-sessions/{session_id}
 GET  /test-sessions/{session_id}/events
 GET  /test-sessions/{session_id}/snapshots
+GET  /test-sessions/{session_id}/snapshots/{name}/annotated
 GET  /face-match-events?analysis_run_id={analysis_run_id}
 GET  /analysis-runs/{analysis_run_id}/face-match-summary
 GET  /person-instances?analysis_run_id={analysis_run_id}
@@ -154,12 +155,15 @@ GET  /test-cameras/{camera_id}/status
 `CCTV_YOLO_ENABLED`도 호환되지만 신규 설정은 `CCTV_DETECTOR_ENABLED=true`를
 사용합니다.
 
-객체 분석 시에는 기본으로 클래스별 IoU 객체 추적이 적용되어 각 검출 결과에
-분석 실행 내에서 유효한 `track_id`가 저장됩니다. `/detections` 응답에서도 ID를
-확인할 수 있고, 특정 객체의 이력은
+객체 분석 결과는 `CCTV_DETECTION_CLASS_NAMES`에 지정한 클래스만 후속 처리하고
+DB에 저장합니다. 기본값은 `person,car,cat,dog`입니다. 이 중
+`CCTV_TRACKER_CLASS_NAMES`에 지정한 클래스만 IoU `track_id`를 받으며 기본값은
+`person`입니다. 추적 목록은 반드시 검출 목록의 부분집합이어야 합니다. 네 종류를
+모두 추적하려면 두 값을 모두 `person,car,cat,dog`로 지정합니다. `/detections`
+응답에서 Track ID를 확인할 수 있고, 특정 객체의 이력은
 `/detections?analysis_run_id=<run-id>&track_id=<track-id>`로 조회합니다. 추적을
 끄려면 `CCTV_TRACKING_ENABLED=false`를 사용합니다. 기본값은 IoU 임계값 `0.3`,
-누락 허용 `4`프레임, 유휴 만료 `3`초이며 각각 `.env`에서 조정할 수 있습니다.
+누락 허용 `10`프레임, 유휴 만료 `12`초이며 각각 `.env`에서 조정할 수 있습니다.
 과거 스키마에서 저장된 검출 결과의 `track_id`는 `null`로 유지됩니다.
 
 스키마 v13부터 `TrackIdentityResolver`가 `YOLO track_id → 얼굴 인식 → 세션 내
@@ -168,6 +172,13 @@ person_instance_id` 순서로 끊어진 트랙을 묶습니다. 동일 `identity
 연속적인 경우에만 이후 matched 트랙과 연결합니다. 원본 얼굴 판정 횟수와 별도로
 person instance의 최종 `matched|unknown` 상태를 집계하므로, 연결된 인물이 나중에
 정상 인식되면 세션의 최종 Unknown 인물 수에서는 제외됩니다.
+
+대시보드의 스냅샷을 클릭하거나 얼굴 인식 결과의 `박스 보기`를 누르면 설정된 추적
+클래스의 YOLO 박스와 `track_id`가 표시됩니다. 사람은 최신 `person_instance_id`도
+함께 표시합니다. 분석 결과 이미지는 원본 JPEG를 수정하지 않고 요청 시점의 DB
+연결로 생성하므로, 서로 다른 `track_id`가 나중에 같은 인물로 병합되어도 과거
+스냅샷까지 동일한 Person ID로 표시됩니다. 미리보기의 `원본`과 `분석 결과` 버튼으로
+두 이미지를 전환할 수 있습니다.
 
 스키마 v4부터 추적 결과는 `tracks`와 `track_observations`에도 정규화해
 저장합니다. `tracks`에는 최초·최종 관측 시점, 관측 수, 최대 신뢰도가 누적되고,

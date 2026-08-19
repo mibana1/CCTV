@@ -294,6 +294,8 @@ def test_local_video_cli_uses_interchangeable_detector_interface(
     monkeypatch.setenv("CCTV_DETECTOR_TYPE", "custom")
     monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
     monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_DETECTION_CLASS_NAMES", "custom-object")
+    monkeypatch.setenv("CCTV_TRACKER_CLASS_NAMES", "custom-object")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
     monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "cctv.jsonl"))
     get_settings.cache_clear()
@@ -310,6 +312,9 @@ def test_local_video_cli_uses_interchangeable_detector_interface(
     assert output["analysis"]["detector_type"] == "custom"
     assert output["analysis"]["model_name"] == "custom.model"
     assert output["analysis"]["tracking"]["assigned_detections"] == 1
+    assert output["analysis"]["tracking"]["created_tracks"] == 1
+    assert output["analysis"]["detection_class_names"] == ["custom-object"]
+    assert output["analysis"]["tracker_class_names"] == ["custom-object"]
 
 
 def test_local_video_cli_matches_faces_as_an_independent_consumer(

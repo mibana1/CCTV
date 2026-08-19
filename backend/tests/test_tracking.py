@@ -1,4 +1,10 @@
-from cctv.inference import BoundingBox, Detection, FrameDetections, IoUTracker
+from cctv.inference import (
+    BoundingBox,
+    Detection,
+    FrameDetections,
+    IoUTracker,
+    filter_detections_by_class,
+)
 
 
 def result(
@@ -42,6 +48,55 @@ def test_tracker_keeps_id_for_overlapping_detection_of_same_class() -> None:
     assert tracker.active_track_ids == (1,)
 
 
+def test_tracker_assigns_ids_only_to_configured_person_class() -> None:
+    tracker = IoUTracker(iou_threshold=0.3, tracked_class_names=("PERSON",))
+
+    first = tracker.update(
+        result(
+            0,
+            0.0,
+            detection(0, (10, 10, 110, 210)),
+            detection(2, (200, 100, 400, 250)),
+        )
+    )
+    second = tracker.update(
+        result(
+            1,
+            0.5,
+            detection(0, (15, 12, 115, 212)),
+            detection(2, (205, 100, 405, 250)),
+        )
+    )
+
+    assert [item.track_id for item in first.detections] == [1, None]
+    assert [item.track_id for item in second.detections] == [1, None]
+    assert tracker.summary.assigned_detections == 2
+    assert tracker.summary.created_tracks == 1
+    assert tracker.summary.matched_detections == 1
+    assert tracker.active_track_ids == (1,)
+
+
+def test_detection_filter_keeps_only_configured_classes_in_source_order() -> None:
+    unfiltered = result(
+        0,
+        0.0,
+        detection(2, (200, 100, 400, 250)),
+        detection(0, (10, 10, 110, 210)),
+        Detection(
+            class_id=15,
+            label="cat",
+            confidence=0.8,
+            box=BoundingBox(300, 100, 380, 200),
+        ),
+    )
+
+    filtered = filter_detections_by_class(unfiltered, ("PERSON", "dog"))
+
+    assert [item.label for item in filtered.detections] == ["person"]
+    assert filtered.sample_index == unfiltered.sample_index
+    assert len(unfiltered.detections) == 3
+
+
 def test_tracker_never_matches_different_classes_or_two_detections_to_one_track() -> None:
     tracker = IoUTracker(iou_threshold=0.3)
     tracker.update(result(0, 0.0, detection(0, (10, 10, 110, 210))))
@@ -76,6 +131,25 @@ def test_tracker_expires_missing_and_idle_tracks() -> None:
     assert after_gap.detections[0].track_id == 2
     assert missing_tracker.active_track_ids == (2,)
     assert idle_tracker.active_track_ids == (2,)
+
+
+def test_tracker_reacquires_default_track_after_detection_and_source_gaps() -> None:
+    tracker = IoUTracker()
+
+    first = tracker.update(result(0, 0.0, detection(0, (10, 10, 110, 210))))
+    for sample_index in range(1, 9):
+        tracker.update(result(sample_index, sample_index * 0.5))
+    after_detection_gap = tracker.update(
+        result(9, 4.5, detection(0, (12, 10, 112, 210)))
+    )
+    after_source_gap = tracker.update(
+        result(10, 14.0, detection(0, (14, 10, 114, 210)))
+    )
+
+    assert first.detections[0].track_id == 1
+    assert after_detection_gap.detections[0].track_id == 1
+    assert after_source_gap.detections[0].track_id == 1
+    assert tracker.summary.created_tracks == 1
 
 
 def test_tracker_rejects_out_of_order_frames() -> None:

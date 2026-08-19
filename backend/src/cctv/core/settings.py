@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     detector_input_size: int | None = Field(default=None, ge=32, le=4096)
     detector_confidence_threshold: float | None = Field(default=None, gt=0, le=1)
     detector_nms_threshold: float | None = Field(default=None, ge=0, le=1)
+    detection_class_names: str = "person,car,cat,dog"
     # Deprecated compatibility settings. Generic detector settings take precedence.
     yolo_enabled: bool = False
     yolo_input_size: int = Field(default=640, ge=32, le=4096)
@@ -62,8 +63,9 @@ class Settings(BaseSettings):
     yolo_nms_threshold: float = Field(default=0.45, ge=0, le=1)
     tracking_enabled: bool = True
     tracker_iou_threshold: float = Field(default=0.3, gt=0, le=1)
-    tracker_max_missed_frames: int = Field(default=4, ge=0, le=300)
-    tracker_max_idle_seconds: float = Field(default=3.0, gt=0, le=300)
+    tracker_max_missed_frames: int = Field(default=10, ge=0, le=300)
+    tracker_max_idle_seconds: float = Field(default=12.0, gt=0, le=300)
+    tracker_class_names: str = "person"
     persist_detections: bool = True
     rules_enabled: bool = True
     hiperwall_dry_run_enabled: bool = True
@@ -93,7 +95,7 @@ class Settings(BaseSettings):
     face_match_similarity_threshold: float = Field(default=0.45, gt=0, le=1)
     face_match_minimum_margin: float = Field(default=0.05, ge=0, le=1)
     face_match_unknown_retry_seconds: float = Field(default=2.0, gt=0, le=300)
-    face_identity_stitch_max_gap_seconds: float = Field(default=5.0, gt=0, le=300)
+    face_identity_stitch_max_gap_seconds: float = Field(default=12.0, gt=0, le=300)
     face_identity_stitch_min_similarity: float = Field(default=0.35, ge=-1, le=1)
     face_identity_stitch_max_distance_ratio: float = Field(default=6.0, gt=0, le=100)
     test_dashboard_enabled: bool = False
@@ -228,6 +230,20 @@ class Settings(BaseSettings):
             )
         return normalized
 
+    @field_validator("detection_class_names", "tracker_class_names")
+    @classmethod
+    def normalize_class_name_list(cls, value: str) -> str:
+        """Normalize a comma-separated, ordered set of detector class labels."""
+        raw_names = value.split(",")
+        names = tuple(dict.fromkeys(name.strip().casefold() for name in raw_names))
+        if not names or any(not name or len(name) > 128 for name in names):
+            raise ValueError(
+                "class names must be a comma-separated list of 1-128 character labels"
+            )
+        if any(any(character in "\r\n\t" for character in name) for name in names):
+            raise ValueError("class names must not contain control characters")
+        return ",".join(names)
+
     @field_validator("rtsp_source_name")
     @classmethod
     def validate_rtsp_source_name(cls, value: str) -> str:
@@ -246,6 +262,15 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CCTV_RTSP_RECONNECT_MAX_SECONDS must be greater than or equal to "
                 "CCTV_RTSP_RECONNECT_INITIAL_SECONDS"
+            )
+        unavailable_tracker_classes = (
+            self.tracker_class_name_set - self.detection_class_name_set
+        )
+        if unavailable_tracker_classes:
+            formatted = ", ".join(sorted(unavailable_tracker_classes))
+            raise ValueError(
+                "CCTV_TRACKER_CLASS_NAMES must be a subset of "
+                f"CCTV_DETECTION_CLASS_NAMES; unavailable: {formatted}"
             )
         if self.app_mode is not AppMode.LIVE:
             return self
@@ -280,6 +305,22 @@ class Settings(BaseSettings):
         if self.detector_nms_threshold is not None:
             return self.detector_nms_threshold
         return self.yolo_nms_threshold
+
+    @property
+    def detection_class_name_list(self) -> tuple[str, ...]:
+        return tuple(self.detection_class_names.split(","))
+
+    @property
+    def detection_class_name_set(self) -> frozenset[str]:
+        return frozenset(self.detection_class_name_list)
+
+    @property
+    def tracker_class_name_list(self) -> tuple[str, ...]:
+        return tuple(self.tracker_class_names.split(","))
+
+    @property
+    def tracker_class_name_set(self) -> frozenset[str]:
+        return frozenset(self.tracker_class_name_list)
 
 
 @lru_cache(maxsize=1)

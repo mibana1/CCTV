@@ -11,6 +11,7 @@ from cctv.db import (
     initialize_database,
 )
 from cctv.identity import TrackIdentityResolver
+from cctv.inference import BoundingBox, Detection, FrameDetections
 from cctv.main import create_app
 
 
@@ -64,6 +65,31 @@ def _event(
         second_best_similarity=None,
         similarity_threshold=0.45,
         minimum_margin=0.05,
+    )
+
+
+def _tracked_frame(
+    *,
+    track_id: int,
+    sample_index: int,
+    timestamp_seconds: float,
+) -> FrameDetections:
+    return FrameDetections(
+        source_index=sample_index * 12,
+        sample_index=sample_index,
+        timestamp_seconds=timestamp_seconds,
+        frame_width=1280,
+        frame_height=720,
+        inference_seconds=0.01,
+        detections=(
+            Detection(
+                class_id=0,
+                label="person",
+                confidence=0.9,
+                box=BoundingBox(620, 300, 780, 680),
+                track_id=track_id,
+            ),
+        ),
     )
 
 
@@ -210,6 +236,125 @@ def test_resolver_does_not_force_low_similarity_unknown_into_match(tmp_path: Pat
     assert summary.total_instances == 2
     assert summary.matched_instances == 1
     assert summary.unknown_instances == 1
+
+
+def test_resolver_keeps_stationary_unknown_person_across_real_camera_gaps(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "cctv.db"
+    run_id = _run(database_path)
+    detections = DetectionRepository(database_path)
+    faces = FaceMatchRepository(database_path)
+    people = PersonInstanceRepository(database_path)
+    resolver = TrackIdentityResolver(people)
+    observations = (
+        (2, 108, 55.021, 688, 513, 0.135, 111, 56.521),
+        (11, 118, 60.017, 693, 530, 0.133, 137, 69.735),
+        (12, 146, 74.018, 692, 521, 0.090, 155, 79.021),
+        (13, 175, 89.015, 693, 523, 0.158, 180, 91.513),
+        (14, 196, 99.735, 691, 522, 0.172, 213, 108.774),
+        (15, 214, 119.096, 691, 519, 0.202, 216, 120.039),
+        (16, 217, 128.341, 687, 508, 0.117, 239, 139.019),
+    )
+
+    resolved_ids: list[str] = []
+    for (
+        track_id,
+        face_sample,
+        face_timestamp,
+        face_x,
+        face_y,
+        similarity,
+        last_track_sample,
+        last_track_timestamp,
+    ) in observations:
+        resolved = resolver.resolve(
+            faces.save_event(
+                run_id,
+                _event(
+                    track_id=track_id,
+                    sample_index=face_sample,
+                    timestamp_seconds=face_timestamp,
+                    matched=False,
+                    similarity=similarity,
+                    x=face_x,
+                    y=face_y,
+                    width=40,
+                    height=52,
+                ),
+            )
+        )
+        assert resolved is not None
+        resolved_ids.append(resolved.id)
+        detections.save_frame(
+            run_id,
+            _tracked_frame(
+                track_id=track_id,
+                sample_index=last_track_sample,
+                timestamp_seconds=last_track_timestamp,
+            ),
+        )
+
+    assert len(set(resolved_ids)) == 1
+    instance = people.get_instance(resolved_ids[0])
+    assert instance is not None
+    assert instance.status == "unknown"
+    assert instance.track_count == 7
+    assert [
+        link.track_id for link in people.list_links(instance.id, limit=100).items
+    ] == [2, 11, 12, 13, 14, 15, 16]
+
+
+def test_resolver_does_not_merge_distant_weak_candidates_across_long_gap(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "cctv.db"
+    run_id = _run(database_path)
+    detections = DetectionRepository(database_path)
+    faces = FaceMatchRepository(database_path)
+    people = PersonInstanceRepository(database_path)
+    resolver = TrackIdentityResolver(people)
+
+    first = resolver.resolve(
+        faces.save_event(
+            run_id,
+            _event(
+                track_id=1,
+                sample_index=1,
+                timestamp_seconds=1,
+                matched=False,
+                similarity=0.1,
+                x=100,
+                y=100,
+                width=30,
+                height=30,
+            ),
+        )
+    )
+    detections.save_frame(
+        run_id,
+        _tracked_frame(track_id=1, sample_index=2, timestamp_seconds=2),
+    )
+    second = resolver.resolve(
+        faces.save_event(
+            run_id,
+            _event(
+                track_id=2,
+                sample_index=20,
+                timestamp_seconds=10,
+                matched=False,
+                similarity=0.1,
+                x=180,
+                y=100,
+                width=30,
+                height=30,
+            ),
+        )
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.id != second.id
 
 
 def test_resolver_upgrades_unknown_result_on_the_same_track(tmp_path: Path) -> None:

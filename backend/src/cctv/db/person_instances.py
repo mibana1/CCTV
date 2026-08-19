@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -360,6 +361,34 @@ class PersonInstanceRepository:
             ).fetchone()
         return _person_instance_from_row(row) if row is not None else None
 
+    def get_by_tracks(
+        self,
+        analysis_run_id: str,
+        track_ids: Collection[int],
+    ) -> dict[int, PersonInstanceRecord]:
+        """Return the latest person association for several execution-scoped tracks."""
+        normalized_track_ids = tuple(sorted(set(track_ids)))
+        if any(track_id < 1 for track_id in normalized_track_ids):
+            raise ValueError("track_ids must contain only values of at least 1")
+        if not normalized_track_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in normalized_track_ids)
+        with closing(connect_database(self.database_path)) as connection:
+            rows = connection.execute(
+                f"""
+                SELECT link.track_id, instance.*
+                FROM track_identity_links AS link
+                JOIN person_instances AS instance ON instance.id = link.person_instance_id
+                WHERE link.analysis_run_id = ?
+                    AND link.track_id IN ({placeholders})
+                """,
+                (analysis_run_id, *normalized_track_ids),
+            ).fetchall()
+        return {
+            int(row["track_id"]): _person_instance_from_row(row)
+            for row in rows
+        }
+
     def get_by_identity(
         self,
         analysis_run_id: str,
@@ -387,11 +416,27 @@ class PersonInstanceRepository:
         with closing(connect_database(self.database_path)) as connection:
             rows = connection.execute(
                 """
-                SELECT * FROM person_instances
-                WHERE analysis_run_id = ?
-                    AND (identity_id = ? OR best_candidate_identity_id = ?)
-                    AND last_seen_timestamp_seconds BETWEEN ? AND ?
-                ORDER BY last_seen_timestamp_seconds DESC, best_similarity DESC, id
+                SELECT instance.*
+                FROM person_instances AS instance
+                LEFT JOIN track_identity_links AS link
+                    ON link.person_instance_id = instance.id
+                LEFT JOIN tracks AS track
+                    ON track.analysis_run_id = link.analysis_run_id
+                    AND track.track_id = link.track_id
+                WHERE instance.analysis_run_id = ?
+                    AND (
+                        instance.identity_id = ?
+                        OR instance.best_candidate_identity_id = ?
+                    )
+                GROUP BY instance.id
+                HAVING COALESCE(
+                    MAX(track.last_seen_timestamp_seconds),
+                    instance.last_seen_timestamp_seconds
+                ) BETWEEN ? AND ?
+                ORDER BY COALESCE(
+                    MAX(track.last_seen_timestamp_seconds),
+                    instance.last_seen_timestamp_seconds
+                ) DESC, instance.best_similarity DESC, instance.id
                 """,
                 (
                     analysis_run_id,
@@ -402,6 +447,33 @@ class PersonInstanceRepository:
                 ),
             ).fetchall()
         return tuple(_person_instance_from_row(row) for row in rows)
+
+    def get_last_observed_timestamp_seconds(self, instance_id: str) -> float:
+        """Return the latest linked detection time, falling back to a face event."""
+        with closing(connect_database(self.database_path)) as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    instance.last_seen_timestamp_seconds AS face_last_seen,
+                    MAX(track.last_seen_timestamp_seconds) AS track_last_seen
+                FROM person_instances AS instance
+                LEFT JOIN track_identity_links AS link
+                    ON link.person_instance_id = instance.id
+                LEFT JOIN tracks AS track
+                    ON track.analysis_run_id = link.analysis_run_id
+                    AND track.track_id = link.track_id
+                WHERE instance.id = ?
+                GROUP BY instance.id
+                """,
+                (instance_id,),
+            ).fetchone()
+        if row is None:
+            raise LookupError(f"person instance does not exist: {instance_id}")
+        track_last_seen = row["track_last_seen"]
+        return max(
+            float(row["face_last_seen"]),
+            float(track_last_seen) if track_last_seen is not None else 0.0,
+        )
 
     def list_instances(
         self,
