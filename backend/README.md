@@ -28,6 +28,12 @@ uv run cctv
 기본값이고, LIVE 모드는 Hiperwall 주소와 선택된 인증 방식의 필수값을 검증한
 후에만 시작됩니다.
 
+`GET /hiperwall/inventory`는 읽기 전용 HiperInterface 조회 API입니다. `/hello`로
+연결 상태를 확인한 뒤 XML `list`와 `walls` 작업으로 콘텐츠·열린 인스턴스·Zone·
+Wall 메타데이터를 반환합니다. DRY RUN에서도 Hiperwall 연결 설정이 있으면 조회할
+수 있으며 `none`과 `token` 인증을 지원합니다. 이 API는 open/change/close 명령을
+보내지 않습니다.
+
 `GET /health`는 API 버전, 환경, 실행 모드와 SQLite 읽기 가능 여부, 스키마
 버전, journal mode를 반환합니다. SQLite를 읽을 수 없으면 민감한 파일 경로나
 오류 메시지를 응답에 포함하지 않고 HTTP 503과 `health_check_failed` 로그를
@@ -280,6 +286,9 @@ MediaMTX Control API는 `127.0.0.1:9997`에만 바인딩합니다. 내부 전용
 - `line_crossing`: 유한 line 통과 시 방향을 포함한 `line_crossed`
 - `loitering`: polygon 안에서 지정 시간 체류 시 `loitering_started`, 이탈 시
   `loitering_ended`
+- `visual_color`: 추적된 사람의 상의 Crop을 HSV로 분류하고 최근 N회 중 M회가
+  목표 색상이면 `upper_body_color_started`, 조건이 사라지면
+  `upper_body_color_ended`
 
 ```json
 POST /rules
@@ -306,6 +315,13 @@ POST /rules
 `PATCH /rules/{id}/enabled`, `GET /rule-events`로 지원 유형·설정·발생 이력을
 조회하거나 활성 상태를 바꿀 수 있습니다. 이벤트는 해당 프레임, 검출, 트랙과
 같은 SQLite 트랜잭션으로 저장됩니다.
+
+`visual_color`은 `geometry={}`와 `class_name=person`을 사용합니다. 기본 파라미터는
+`window_size=5`, `minimum_matches=3`, `minimum_color_confidence=0.35`,
+`missing_tolerance_seconds=2`, `cooldown_seconds=30`입니다. 지원 색상은 `red`,
+`orange`, `yellow`, `green`, `blue`, `purple`, `pink`, `black`, `white`, `gray`이며
+한국어 색상 이름도 규칙 검증 시 정규화합니다. 상의 Crop이 너무 작으면 해당
+프레임은 반대 표로 계산하지 않고 다음 프레임을 기다립니다.
 
 새 규칙은 `RuleEvaluator` 프로토콜에 맞는 독립 평가기를 만들고
 `built_in_evaluators()`에 등록합니다. 엔진, 워커, DB 스키마는 규칙 유형을

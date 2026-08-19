@@ -111,7 +111,12 @@ def test_rules_api_manages_definitions_and_queries_events(tmp_path: Path) -> Non
         )
 
         assert supported.status_code == 200
-        assert supported.json()["items"] == ["intrusion", "line_crossing", "loitering"]
+        assert supported.json()["items"] == [
+            "intrusion",
+            "line_crossing",
+            "loitering",
+            "visual_color",
+        ]
         assert created.status_code == 201
         assert created.json()["geometry"] == body["geometry"]
         assert duplicate.status_code == 409
@@ -180,3 +185,62 @@ def test_rules_api_rejects_invalid_or_unknown_evaluator_configuration(tmp_path: 
     assert invalid_polygon.status_code == 422
     assert unknown.status_code == 422
     assert "unsupported rule_type" in unknown.json()["detail"]
+
+
+def test_rules_api_creates_and_validates_visual_color_rules(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_path=tmp_path / "cctv.db",
+        model_path=tmp_path / "model.onnx",
+        log_path=tmp_path / "cctv.jsonl",
+    )
+    body = {
+        "name": "Red shirt",
+        "source_name": "camera",
+        "rule_type": "visual_color",
+        "class_name": "person",
+        "geometry": {},
+        "parameters": {
+            "target_color": "red",
+            "window_size": 5,
+            "minimum_matches": 3,
+            "minimum_color_confidence": 0.35,
+            "cooldown_seconds": 30,
+        },
+    }
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/rules", json=body)
+        mapped = client.put(
+            f"/rules/{created.json()['id']}/hiperwall",
+            json={
+                "content_name": "Lobby camera",
+                "zone_id": "Alert Zone",
+                "display_seconds": 30,
+            },
+        )
+        invalid_votes = client.post(
+            "/rules",
+            json={
+                **body,
+                "name": "Invalid votes",
+                "parameters": {**body["parameters"], "minimum_matches": 6},
+            },
+        )
+        invalid_color = client.post(
+            "/rules",
+            json={
+                **body,
+                "name": "Invalid color",
+                "parameters": {**body["parameters"], "target_color": "transparent"},
+            },
+        )
+
+    assert created.status_code == 201
+    assert created.json()["parameters"]["target_color"] == "red"
+    assert mapped.status_code == 200
+    assert mapped.json()["parameters"]["hiperwall"]["zone_id"] == "Alert Zone"
+    assert invalid_votes.status_code == 422
+    assert "minimum_matches" in invalid_votes.json()["detail"]
+    assert invalid_color.status_code == 422
+    assert "target_color" in invalid_color.json()["detail"]

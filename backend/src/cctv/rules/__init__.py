@@ -6,6 +6,7 @@ from cctv.rules.evaluators import (
     LineCrossingEvaluator,
     LoiteringEvaluator,
     RuleEvaluator,
+    VisualColorEvaluator,
     built_in_evaluators,
 )
 from cctv.rules.models import (
@@ -27,5 +28,6 @@ __all__ = [
     "RuleEvent",
     "TrackSample",
     "UnsupportedRuleTypeError",
+    "VisualColorEvaluator",
     "built_in_evaluators",
 ]

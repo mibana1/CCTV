@@ -136,6 +136,7 @@
           <p>터미널 로그 대신 연결 상태, 인식 결과, 자원 사용량과 스냅샷을 한 화면에서 확인합니다.</p>
         </div>
         <div class="header-actions">
+          <a class="nav-link" href="/test-color-events">색상 이벤트</a>
           <a class="nav-link" href="/test-identities">사람 등록</a>
           <div class="health"><span id="health-dot" class="dot"></span><span id="health-text">API 확인 중</span></div>
         </div>
@@ -283,10 +284,11 @@
         previewAnnotatedUrl: null
       };
       const terminal = new Set(["completed", "stopped", "failed"]);
+      const colorLabels = { red: "빨강", orange: "주황", yellow: "노랑", green: "초록", blue: "파랑", purple: "보라", pink: "분홍", black: "검정", white: "흰색", gray: "회색" };
       const eventNames = [
         "session_started", "analysis_run_created", "face_matching_pipeline_initialized",
         "rtsp_worker_started", "rtsp_source_connected", "rtsp_source_reconnecting",
-        "video_face_similarity_evaluated", "face_matching_run_completed",
+        "video_face_similarity_evaluated", "rule_event_emitted", "face_matching_run_completed",
         "rtsp_worker_finished", "rtsp_worker_failed", "session_progress",
         "session_stop_requested", "session_finished"
       ];
@@ -698,7 +700,11 @@
         if (events.querySelector(".empty")) events.replaceChildren();
         const line = document.createElement("div"); line.className = "event";
         const faceSimilarity = data.rejection_reason === "no_candidates" ? "후보 없음" : (data.best_similarity ?? 0).toFixed(3);
-        const detail = name === "video_face_similarity_evaluated" ? `${data.match_status} · ${faceSimilarity}` : (data.status || data.source_name || "");
+        const detail = name === "video_face_similarity_evaluated"
+          ? `${data.match_status} · ${faceSimilarity}`
+          : name === "rule_event_emitted"
+            ? `${data.event_type} · ${colorLabels[data.payload?.target_color] || data.payload?.target_color || data.event_state}`
+            : (data.status || data.source_name || "");
         line.textContent = `${new Date().toLocaleTimeString("ko-KR")} · ${name}${detail ? ` · ${detail}` : ""}`;
         events.prepend(line); while (events.children.length > 25) events.lastElementChild.remove();
         if (name === "session_progress" && state.session) {

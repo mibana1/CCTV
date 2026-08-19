@@ -19,7 +19,7 @@ class HiperwallRequestError(RuntimeError):
 
 
 class HiperwallClient:
-    """Send open and close commands without handling queue state."""
+    """Send commands and query inventory without handling queue state."""
 
     def __init__(
         self,
@@ -49,6 +49,12 @@ class HiperwallClient:
     def hello(self) -> dict[str, Any]:
         try:
             response = self._client.get(f"{self.base_url}/hello")
+        except httpx.InvalidURL as error:
+            raise HiperwallRequestError(
+                "hiperwall_invalid_url",
+                "Hiperwall URL is invalid",
+                retryable=False,
+            ) from error
         except httpx.HTTPError as error:
             raise HiperwallRequestError(
                 "hiperwall_transport_error",
@@ -61,6 +67,20 @@ class HiperwallClient:
                 retryable=response.status_code >= 500,
             )
         return {"http_status": response.status_code, "hello": response.text.strip()}
+
+    def inventory(self) -> dict[str, Any]:
+        """Return HiperInterface content, open-instance, wall, and Zone metadata."""
+        hello = self.hello()
+        content_response = self._post_xml(self._action_xml("list"))
+        walls_response = self._post_xml(self._action_xml("walls"))
+        contents = _parse_content_list_xml(content_response.text)
+        zones, walls = _parse_walls_xml(walls_response.text)
+        return {
+            "hello": hello["hello"],
+            "contents": contents,
+            "zones": zones,
+            "walls": walls,
+        }
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
         operation = request.get("operation")
@@ -89,6 +109,12 @@ class HiperwallClient:
                 headers={"content-type": "application/xml; charset=utf-8"},
                 content=xml.encode("utf-8"),
             )
+        except httpx.InvalidURL as error:
+            raise HiperwallRequestError(
+                "hiperwall_invalid_url",
+                "Hiperwall URL is invalid",
+                retryable=False,
+            ) from error
         except httpx.TimeoutException as error:
             raise HiperwallRequestError(
                 "hiperwall_timeout",
@@ -157,6 +183,11 @@ class HiperwallClient:
         ElementTree.SubElement(command, "id").text = _instance_id(request)
         return _xml_text(root)
 
+    def _action_xml(self, action_type: str) -> str:
+        root = self._root()
+        ElementTree.SubElement(root, "action", {"type": action_type})
+        return _xml_text(root)
+
     @staticmethod
     def _add_layout(
         command: ElementTree.Element,
@@ -215,6 +246,148 @@ def _contains_xml_error(value: str) -> bool:
             re.IGNORECASE,
         )
     )
+
+
+def _parse_content_list_xml(value: str) -> list[dict[str, Any]]:
+    root = _parse_xml(value)
+    contents: list[dict[str, Any]] = []
+    for element in _elements(root, "Object"):
+        name = _child_text(element, "name")
+        if not name:
+            continue
+        width = _number(_child_text(element, "width"))
+        height = _number(_child_text(element, "height"))
+        contents.append(
+            {
+                "name": name,
+                "type": (element.attrib.get("type") or _child_text(element, "type")).strip(),
+                "uuid": _child_text(element, "uuid") or None,
+                "label": _child_text(element, "label") or None,
+                "width": width,
+                "height": height,
+                "zone_id": _child_text(element, "zone") or None,
+                "instances": [
+                    _parse_instance(instance)
+                    for instance in element
+                    if _local_name(instance.tag) == "Instance"
+                ],
+            }
+        )
+    return contents
+
+
+def _parse_instance(element: ElementTree.Element) -> dict[str, Any]:
+    audio = _pair(_child_text(element, "audio"), numeric_second=False)
+    return {
+        "id": _child_text(element, "id"),
+        "position": _pair(_child_text(element, "position")),
+        "size": _pair(_child_text(element, "size")),
+        "rotation": _number(_child_text(element, "rotation")),
+        "transparency": _number(_child_text(element, "transparency")),
+        "rgb": _numbers(_child_text(element, "rgb"), expected=3),
+        "black_and_white": _number(_child_text(element, "bw")),
+        "mosaic": _number(_child_text(element, "mosaic")),
+        "layer": _number(_child_text(element, "layer")),
+        "show_label": _boolean(_child_text(element, "showlabel")),
+        "border_rgb": _child_text(element, "borderRGB") or None,
+        "border_visibility": _number(_child_text(element, "bordervis")),
+        "audio_volume": audio[0] if audio else None,
+        "audio_muted": (
+            str(audio[1]).casefold() == "muted" if audio and len(audio) > 1 else None
+        ),
+    }
+
+
+def _parse_walls_xml(value: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    root = _parse_xml(value)
+    zones = [_parse_display_area(element, is_zone=True) for element in _elements(root, "Zone")]
+    walls = [_parse_display_area(element, is_zone=False) for element in _elements(root, "Wall")]
+    return zones, walls
+
+
+def _parse_display_area(element: ElementTree.Element, *, is_zone: bool) -> dict[str, Any]:
+    prefix = "zone" if is_zone else "wall"
+    return {
+        "id": (_child_text(element, "id") or None) if is_zone else None,
+        "name": _child_text(element, "name") or "default",
+        "left": _number(_child_text(element, "left")),
+        "top": _number(_child_text(element, "top")),
+        "width": _number(_child_text(element, "width")),
+        "height": _number(_child_text(element, "height")),
+        "color": _child_text(element, "color") or None,
+        "grid_horizontal": _integer(_child_text(element, f"{prefix}gridh")),
+        "grid_vertical": _integer(_child_text(element, f"{prefix}gridv")),
+    }
+
+
+def _parse_xml(value: str) -> ElementTree.Element:
+    try:
+        return ElementTree.fromstring(value)
+    except ElementTree.ParseError as error:
+        raise HiperwallRequestError(
+            "hiperwall_invalid_xml",
+            "Hiperwall returned invalid XML",
+        ) from error
+
+
+def _elements(root: ElementTree.Element, name: str) -> list[ElementTree.Element]:
+    return [element for element in root.iter() if _local_name(element.tag) == name]
+
+
+def _local_name(tag: object) -> str:
+    return str(tag).rsplit("}", 1)[-1].rsplit(":", 1)[-1]
+
+
+def _child_text(element: ElementTree.Element, name: str) -> str:
+    for child in element:
+        if _local_name(child.tag) == name:
+            return (child.text or "").strip()
+    return ""
+
+
+def _number(value: str) -> float | None:
+    try:
+        return float(value) if value else None
+    except ValueError:
+        return None
+
+
+def _integer(value: str) -> int | None:
+    number = _number(value)
+    return int(number) if number is not None and number.is_integer() else None
+
+
+def _boolean(value: str) -> bool | None:
+    normalized = value.casefold()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    return None
+
+
+def _numbers(value: str, *, expected: int) -> list[float] | None:
+    if not value:
+        return None
+    try:
+        result = [float(part.strip()) for part in value.split(",")]
+    except ValueError:
+        return None
+    return result if len(result) == expected else None
+
+
+def _pair(value: str, *, numeric_second: bool = True) -> list[Any] | None:
+    if not value:
+        return None
+    parts = [part.strip() for part in value.split(",", 1)]
+    if len(parts) != 2:
+        return None
+    try:
+        first: Any = float(parts[0])
+        second: Any = float(parts[1]) if numeric_second else parts[1]
+    except ValueError:
+        return None
+    return [first, second]
 
 
 __all__ = ["HiperwallClient", "HiperwallRequestError"]

@@ -55,4 +55,20 @@ def choice_parameter(
     return value
 
 
-__all__ = ["RuleEvaluator", "choice_parameter", "number_parameter"]
+def integer_parameter(
+    rule: RuleDefinition,
+    name: str,
+    default: int,
+    *,
+    minimum: int = 0,
+    maximum: int = 10_000,
+) -> int:
+    value = rule.parameters.get(name, default)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise RuleConfigurationError(f"{name} must be a whole number")
+    if not minimum <= value <= maximum:
+        raise RuleConfigurationError(f"{name} must be between {minimum} and {maximum}")
+    return value
+
+
+__all__ = ["RuleEvaluator", "choice_parameter", "integer_parameter", "number_parameter"]

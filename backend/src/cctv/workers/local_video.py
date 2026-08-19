@@ -41,6 +41,7 @@ from cctv.media import (
     build_snapshot_run_directory,
 )
 from cctv.rules import RuleEngine
+from cctv.vision import UpperBodyColorAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -377,6 +378,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         analysis_run: AnalysisRunRecord | None = None
         analysis_run_finished = False
         face_matching_consumer: FaceMatchingConsumer | None = None
+        color_analyzer: UpperBodyColorAnalyzer | None = None
         if analyze_objects:
             detector = create_detector(
                 DetectorConfig(
@@ -425,6 +427,8 @@ def run(argv: Sequence[str] | None = None) -> None:
                         source_name=Path(video_path).name
                     )
                     rule_engine = RuleEngine(definitions)
+                    if any(rule.rule_type == "visual_color" for rule in definitions):
+                        color_analyzer = UpperBodyColorAnalyzer()
                     logger.info(
                         "Rule engine initialized",
                         extra={
@@ -470,7 +474,35 @@ def run(argv: Sequence[str] | None = None) -> None:
                             result,
                             active_track_ids=tracker.active_track_ids,
                         )
-                rule_events = rule_engine.process(result) if rule_engine is not None else ()
+                color_attributes: dict[int, dict[str, object]] = {}
+                if color_analyzer is not None:
+                    color_attributes = {
+                        track_id: observation.rule_attributes
+                        for track_id, observation in color_analyzer.analyze(
+                            frame,
+                            result,
+                        ).items()
+                    }
+                rule_events = (
+                    rule_engine.process(result, attributes_by_track=color_attributes)
+                    if rule_engine is not None
+                    else ()
+                )
+                for emitted_event in rule_events:
+                    logger.info(
+                        "Rule event emitted",
+                        extra={
+                            "event": "rule_event_emitted",
+                            "rule_id": emitted_event.rule_id,
+                            "track_id": emitted_event.track_id,
+                            "event_type": emitted_event.event_type,
+                            "event_state": emitted_event.event_state,
+                            "timestamp_seconds": emitted_event.occurred_at_seconds,
+                            "class_name": emitted_event.class_name,
+                            "confidence": emitted_event.confidence,
+                            "payload": emitted_event.payload,
+                        },
+                    )
                 emitted_rule_events += len(rule_events)
                 display_actions = (
                     hiperwall_planner.plan(
@@ -613,6 +645,9 @@ def run(argv: Sequence[str] | None = None) -> None:
             output["analysis"]["filtered_out_detections"] = filtered_out_detections
             output["analysis"]["tracking"] = (
                 asdict(tracker.summary) if tracker is not None else None
+            )
+            output["analysis"]["upper_body_color"] = (
+                asdict(color_analyzer.summary) if color_analyzer is not None else None
             )
             output["analysis"]["rules"] = {
                 "configured": settings.rules_enabled,

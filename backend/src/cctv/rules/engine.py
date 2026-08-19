@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 from cctv.inference import FrameDetections
 from cctv.rules.evaluators import RuleEvaluator, built_in_evaluators
@@ -44,9 +45,14 @@ class RuleEngine:
             raise ValueError(f"duplicate evaluator rule_type: {rule_type}")
         self._evaluators[rule_type] = evaluator
 
-    def process(self, result: FrameDetections) -> tuple[RuleEvent, ...]:
+    def process(
+        self,
+        result: FrameDetections,
+        *,
+        attributes_by_track: Mapping[int, Mapping[str, Any]] | None = None,
+    ) -> tuple[RuleEvent, ...]:
         """Evaluate one chronologically ordered tracked frame against every rule."""
-        samples = _track_samples(result)
+        samples = _track_samples(result, attributes_by_track=attributes_by_track)
         events: list[RuleEvent] = []
         for rule in self.rules:
             matching_samples = (
@@ -77,7 +83,11 @@ class RuleEngine:
             ) from error
 
 
-def _track_samples(result: FrameDetections) -> tuple[TrackSample, ...]:
+def _track_samples(
+    result: FrameDetections,
+    *,
+    attributes_by_track: Mapping[int, Mapping[str, Any]] | None = None,
+) -> tuple[TrackSample, ...]:
     if result.frame_width <= 0 or result.frame_height <= 0:
         raise ValueError("rule evaluation requires positive frame dimensions")
     samples: list[TrackSample] = []
@@ -99,6 +109,11 @@ def _track_samples(result: FrameDetections) -> tuple[TrackSample, ...]:
                     detection.box.y1 / result.frame_height,
                     detection.box.x2 / result.frame_width,
                     detection.box.y2 / result.frame_height,
+                ),
+                attributes=(
+                    dict(attributes_by_track.get(detection.track_id, {}))
+                    if attributes_by_track is not None
+                    else {}
                 ),
             )
         )

@@ -189,3 +189,97 @@ def test_engine_rejects_unsupported_rule_type() -> None:
         assert "unsupported rule_type" in str(error)
     else:
         raise AssertionError("unsupported rule type was accepted")
+
+
+def test_visual_color_emits_after_three_of_five_votes_and_ends_when_lost() -> None:
+    engine = RuleEngine(
+        [
+            rule(
+                "visual_color",
+                {},
+                parameters={
+                    "target_color": "red",
+                    "window_size": 5,
+                    "minimum_matches": 3,
+                    "minimum_color_confidence": 0.35,
+                    "cooldown_seconds": 0,
+                },
+            )
+        ]
+    )
+    detection = tracked_detection(1, foot_x=50, foot_y=70)
+
+    def process(sample_index: int, color: str):
+        return engine.process(
+            frame(sample_index, sample_index * 0.5, detection),
+            attributes_by_track={
+                1: {
+                    "upper_body_color": color,
+                    "upper_body_color_confidence": 0.8,
+                    "upper_body_crop_box": [40, 30, 60, 55],
+                    "upper_body_color_distribution": {color: 0.8},
+                }
+            },
+        )
+
+    assert process(0, "red") == ()
+    assert process(1, "blue") == ()
+    assert process(2, "red") == ()
+    started = process(3, "red")
+    assert process(4, "blue") == ()
+    ended = process(5, "blue")
+
+    assert [event.event_type for event in started] == ["upper_body_color_started"]
+    assert started[0].event_state == "started"
+    assert started[0].confidence == 0.8
+    assert started[0].payload["target_color"] == "red"
+    assert started[0].payload["matching_votes"] == 3
+    assert started[0].payload["minimum_matches"] == 3
+    assert started[0].payload["crop_box"] == [40, 30, 60, 55]
+    assert [event.event_type for event in ended] == ["upper_body_color_ended"]
+    assert ended[0].event_state == "ended"
+    assert ended[0].payload["reason"] == "vote_threshold_lost"
+
+
+def test_visual_color_ignores_low_confidence_and_accepts_korean_color_alias() -> None:
+    engine = RuleEngine(
+        [
+            rule(
+                "visual_color",
+                {},
+                parameters={
+                    "target_color": "빨간색",
+                    "window_size": 1,
+                    "minimum_matches": 1,
+                    "minimum_color_confidence": 0.5,
+                },
+            )
+        ]
+    )
+    detection = tracked_detection(1, foot_x=50, foot_y=70)
+    result = frame(0, 0, detection)
+
+    assert (
+        engine.process(
+            result,
+            attributes_by_track={
+                1: {
+                    "upper_body_color": "red",
+                    "upper_body_color_confidence": 0.49,
+                }
+            },
+        )
+        == ()
+    )
+    events = engine.process(
+        frame(1, 0.5, detection),
+        attributes_by_track={
+            1: {
+                "upper_body_color": "red",
+                "upper_body_color_confidence": 0.9,
+            }
+        },
+    )
+
+    assert len(events) == 1
+    assert events[0].payload["target_color"] == "red"

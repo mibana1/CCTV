@@ -69,6 +69,7 @@ def create_app(
 
         application.state.settings = application_settings
         application.state.database = database_state
+        application.state.hiperwall_client = hiperwall_client
         application.state.test_session_manager = (
             test_session_manager or TestSessionManager(application_settings)
         )

@@ -220,6 +220,7 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
         )
         page = client.get("/test-dashboard")
         identity_page = client.get("/test-identities")
+        color_event_page = client.get("/test-color-events")
         started = client.post(
             "/test-sessions",
             json={
@@ -246,6 +247,7 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
     assert page.status_code == 200
     assert "RTSP 얼굴 인식 테스트" in page.text
     assert 'href="/test-identities"' in page.text
+    assert 'href="/test-color-events"' in page.text
     assert 'id="person-form"' not in page.text
     assert identity_page.status_code == 200
     assert "사람 등록 · CCTV 테스트" in identity_page.text
@@ -254,6 +256,19 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
     assert 'api("/test-identities"' in identity_page.text
     assert 'method: "DELETE"' in identity_page.text
     assert "등록 사진과 얼굴 특징도 함께 삭제됩니다" in identity_page.text
+    assert color_event_page.status_code == 200
+    assert "색상 이벤트 · CCTV 테스트" in color_event_page.text
+    assert 'id="color-rule-form"' in color_event_page.text
+    assert 'rule_type: "visual_color"' in color_event_page.text
+    assert 'target_color: document.getElementById("target-color").value' in color_event_page.text
+    assert 'api("/rules"' in color_event_page.text
+    assert "Hiperwall 연결 · 선택" in color_event_page.text
+    assert 'id="hiperwall-reload"' in color_event_page.text
+    assert 'api("/hiperwall/inventory")' in color_event_page.text
+    assert 'id="hiperwall-content"' in color_event_page.text
+    assert 'id="hiperwall-zone"' in color_event_page.text
+    assert 'content_uuid: content.uuid' in color_event_page.text
+    assert 'layout: { mode: "pixels"' in color_event_page.text
     assert "카메라 등록" in page.text
     assert "카메라 선택" in page.text
     assert 'role="tablist" aria-label="카메라 관리"' in page.text
@@ -274,6 +289,7 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
     assert "세션 스냅샷과 작업 로그도 함께 삭제됩니다" in page.text
     assert 'item.rejection_reason === "no_candidates"' in page.text
     assert "후보 없음" in page.text
+    assert '"rule_event_emitted"' in page.text
     assert started.status_code == 201
     assert started.json()["camera_id"] == camera.id
     assert started.json()["stream_path"] == "camera-test"
@@ -710,9 +726,11 @@ def test_dashboard_is_denied_when_feature_is_disabled(tmp_path: Path) -> None:
     ) as client:
         response = client.get("/test-dashboard")
         identity_response = client.get("/test-identities")
+        color_event_response = client.get("/test-color-events")
 
     assert response.status_code == 403
     assert identity_response.status_code == 403
+    assert color_event_response.status_code == 403
 
 
 def test_dashboard_rejects_non_local_host_and_live_mode(tmp_path: Path) -> None:

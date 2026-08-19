@@ -2,12 +2,18 @@
 
 from cctv.rules.evaluators.base import RuleEvaluator
 from cctv.rules.evaluators.line_crossing import LineCrossingEvaluator
+from cctv.rules.evaluators.visual_color import VisualColorEvaluator
 from cctv.rules.evaluators.zone import IntrusionEvaluator, LoiteringEvaluator
 
 
 def built_in_evaluators() -> tuple[RuleEvaluator, ...]:
     """Return fresh stateful evaluators for one rule-engine instance."""
-    return (IntrusionEvaluator(), LineCrossingEvaluator(), LoiteringEvaluator())
+    return (
+        IntrusionEvaluator(),
+        LineCrossingEvaluator(),
+        LoiteringEvaluator(),
+        VisualColorEvaluator(),
+    )
 
 
 __all__ = [
@@ -15,5 +21,6 @@ __all__ = [
     "LineCrossingEvaluator",
     "LoiteringEvaluator",
     "RuleEvaluator",
+    "VisualColorEvaluator",
     "built_in_evaluators",
 ]

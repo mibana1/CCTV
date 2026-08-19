@@ -13,6 +13,7 @@ from cctv.db import (
     DisplayActionRecord,
     DisplayActionRepository,
 )
+from cctv.hiperwall import HiperwallClient, HiperwallRequestError
 
 router = APIRouter(tags=["hiperwall"])
 
@@ -49,8 +50,129 @@ class DisplayActionPageResponse(BaseModel):
     items: list[DisplayActionResponse]
 
 
+class HiperwallContentInstanceResponse(BaseModel):
+    id: str
+    position: tuple[float, float] | None = None
+    size: tuple[float, float] | None = None
+    rotation: float | None = None
+    transparency: float | None = None
+    rgb: tuple[float, float, float] | None = None
+    black_and_white: float | None = None
+    mosaic: float | None = None
+    layer: float | None = None
+    show_label: bool | None = None
+    border_rgb: str | None = None
+    border_visibility: float | None = None
+    audio_volume: float | None = None
+    audio_muted: bool | None = None
+
+
+class HiperwallContentResponse(BaseModel):
+    name: str
+    type: str
+    uuid: str | None = None
+    label: str | None = None
+    width: float | None = None
+    height: float | None = None
+    zone_id: str | None = None
+    instances: list[HiperwallContentInstanceResponse]
+
+
+class HiperwallZoneResponse(BaseModel):
+    id: str | None = None
+    name: str
+    left: float | None = None
+    top: float | None = None
+    width: float | None = None
+    height: float | None = None
+    color: str | None = None
+    grid_horizontal: int | None = None
+    grid_vertical: int | None = None
+
+
+class HiperwallWallResponse(BaseModel):
+    name: str
+    left: float | None = None
+    top: float | None = None
+    width: float | None = None
+    height: float | None = None
+    color: str | None = None
+    grid_horizontal: int | None = None
+    grid_vertical: int | None = None
+
+
+class HiperwallInventoryResponse(BaseModel):
+    hello: str
+    contents: list[HiperwallContentResponse]
+    zones: list[HiperwallZoneResponse]
+    walls: list[HiperwallWallResponse]
+
+
 PageNumber = Annotated[int, Query(ge=1)]
 PageLimit = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
+
+
+@router.get(
+    "/hiperwall/inventory",
+    response_model=HiperwallInventoryResponse,
+    response_model_exclude_none=True,
+    responses={
+        status.HTTP_502_BAD_GATEWAY: {"description": "Hiperwall inventory request failed"},
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Hiperwall connection is not configured"
+        },
+    },
+)
+def get_hiperwall_inventory(request: Request) -> HiperwallInventoryResponse:
+    """Query HiperInterface for selectable content, open instances, walls, and Zones."""
+    settings = request.app.state.settings
+    if not settings.hiperwall_base_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="HIPERWALL_BASE_URL이 설정되지 않았습니다.",
+        )
+    if settings.hiperwall_auth_mode == "crypto":
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="현재 Hiperwall 조회는 none 또는 token 인증만 지원합니다.",
+        )
+    if settings.hiperwall_auth_mode == "token" and (
+        not settings.hiperwall_user
+        or settings.hiperwall_token is None
+        or not settings.hiperwall_token.get_secret_value()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Hiperwall 사용자 또는 토큰이 설정되지 않았습니다.",
+        )
+
+    injected_client = getattr(request.app.state, "hiperwall_client", None)
+    client = injected_client or HiperwallClient(
+        base_url=settings.hiperwall_base_url,
+        auth_mode=settings.hiperwall_auth_mode,
+        user=settings.hiperwall_user,
+        token=(
+            settings.hiperwall_token.get_secret_value()
+            if settings.hiperwall_token is not None
+            else ""
+        ),
+        timeout_seconds=settings.hiperwall_timeout_seconds,
+    )
+    try:
+        return HiperwallInventoryResponse.model_validate(client.inventory())
+    except HiperwallRequestError as error:
+        response_status = (
+            status.HTTP_503_SERVICE_UNAVAILABLE
+            if error.code == "hiperwall_invalid_url"
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        raise HTTPException(
+            status_code=response_status,
+            detail=f"Hiperwall 목록 조회 실패: {error}",
+        ) from error
+    finally:
+        if injected_client is None:
+            client.close()
 
 
 @router.get("/hiperwall-actions", response_model=DisplayActionPageResponse)

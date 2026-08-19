@@ -95,6 +95,16 @@ Backend Hiperwall Worker → HiperInterface /xmlcommand → 지정 Zone에 콘�
 Hiperwall에는 MediaMTX의 RTSP 주소를 HiperSource 콘텐츠로 먼저 등록해야 합니다.
 API는 영상을 전송하지 않고 등록된 콘텐츠의 이름 또는 UUID를 열고 닫습니다.
 
+`GET /hiperwall/inventory`는 설정된 HiperInterface의 `/hello`와 `list`, `walls`
+작업을 호출해 콘텐츠 이름·유형·UUID·라벨·열린 인스턴스와 Zone ID·좌표·크기·
+그리드 정보를 반환합니다. Zone 강제 모드가 아니면 Zone 대신 Wall 목록이
+`walls`에 반환됩니다. 조회는 화면을 변경하지 않으므로 DRY RUN에서도
+`HIPERWALL_BASE_URL`과 인증정보가 설정돼 있으면 사용할 수 있습니다.
+
+```bash
+curl "http://127.0.0.1:18000/hiperwall/inventory"
+```
+
 #### 규칙별 콘텐츠와 Zone 설정
 
 기존 규칙에는 다음 API로 Hiperwall 매핑을 추가합니다. 실행 중인 영상 Worker는
@@ -206,6 +216,13 @@ Git에서 제외된 `runtime/secrets/camera_credentials.key`에 생성되므로 
 않습니다. 테스트 종료 시 얼굴 비교 결과는 `face_match_events`에 저장되고,
 스냅샷은 `runtime/snapshots/test-session-<ID>`에 남습니다.
 
+`http://127.0.0.1:18000/test-color-events`에서는 카메라와 상의 색상, 최근
+프레임의 일치 기준을 정하고 Hiperwall에서 직접 불러온 콘텐츠와 Zone을 선택해
+색상 이벤트를 등록할 수 있습니다. 콘텐츠는 가능하면 UUID로 저장하고, Zone을
+고르면 조회된 좌표·크기로 Zone 전체 배치를 자동 설정합니다. 기본값은 최근 5회
+중 3회 일치이며 규칙은 다음 테스트 시작부터 적용됩니다. 색상 판정은 Ollama 없이
+OpenCV HSV 분석으로 수행합니다.
+
 ```text
 POST /test-sessions
 POST /test-sessions/{session_id}/stop
@@ -276,7 +293,8 @@ GET /tracks?analysis_run_id=<run-id>&class_name=person
     &observed_from_seconds=10&observed_to_seconds=20&active=true
 ```
 
-스키마 v6부터 추적 결과에 침입, 선 통과, 배회 규칙을 적용할 수 있습니다.
+스키마 v6부터 추적 결과에 침입, 선 통과, 배회 규칙을 적용할 수 있으며 현재는
+사람 상의 색상 규칙도 지원합니다.
 규칙은 정규화 좌표 기반 공통 JSON으로 저장하고, 워커 시작 시 소스 이름별로
 적재합니다. 발생 이벤트는 `rule_events`에 프레임·트랙과 함께 저장됩니다.
 
@@ -284,6 +302,7 @@ GET /tracks?analysis_run_id=<run-id>&class_name=person
 - 규칙 생성·목록: `POST /rules`, `GET /rules?source_name=camera-1`
 - 활성화 변경: `PATCH /rules/<rule-id>/enabled`
 - 이벤트 조회: `GET /rule-events?analysis_run_id=<run-id>&event_type=intrusion_started`
+- 상의 색상: `rule_type=visual_color`, `parameters.target_color=red|orange|yellow|green|blue|purple|pink|black|white|gray`
 
 구체적인 geometry와 parameters 형식 및 새 평가기 추가 방법은
 [`backend/README.md`](backend/README.md)의 규칙 엔진 절을 참고합니다.

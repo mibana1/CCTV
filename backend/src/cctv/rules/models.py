@@ -31,6 +31,7 @@ class TrackSample:
     timestamp_seconds: float
     point: tuple[float, float]
     box: tuple[float, float, float, float]
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

@@ -239,6 +239,131 @@ def test_local_video_cli_persists_yolo_results(
     assert DisplayActionRepository(database_path).list(analysis_run_id=runs.items[0].id).total == 1
 
 
+def test_local_video_cli_emits_upper_body_color_event_and_hiperwall_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    class PersonDetector:
+        def __init__(self) -> None:
+            self.processed_frames = 0
+            self.metadata = DetectorMetadata(
+                detector_type="custom",
+                model_path=tmp_path / "custom.model",
+                model_name="custom.model",
+                model_sha256="e" * 64,
+                device="cpu",
+                input_size=320,
+                confidence_threshold=0.4,
+                nms_threshold=0,
+            )
+
+        @property
+        def summary(self) -> DetectorRunSummary:
+            return DetectorRunSummary(
+                detector_type=self.metadata.detector_type,
+                model_path=self.metadata.model_path,
+                model_name=self.metadata.model_name,
+                model_sha256=self.metadata.model_sha256,
+                device=self.metadata.device,
+                input_size=self.metadata.input_size,
+                confidence_threshold=self.metadata.confidence_threshold,
+                nms_threshold=self.metadata.nms_threshold,
+                processed_frames=self.processed_frames,
+                total_detections=self.processed_frames,
+                total_inference_seconds=0,
+                average_inference_seconds=0,
+            )
+
+        def analyze(self, frame: DecodedFrame) -> FrameDetections:
+            self.processed_frames += 1
+            return FrameDetections(
+                source_index=frame.source_index,
+                sample_index=frame.sample_index,
+                timestamp_seconds=frame.timestamp_seconds,
+                frame_width=frame.image.shape[1],
+                frame_height=frame.image.shape[0],
+                inference_seconds=0,
+                detections=(
+                    Detection(
+                        0,
+                        "person",
+                        0.9,
+                        BoundingBox(2, 1, frame.image.shape[1] - 2, frame.image.shape[0] - 1),
+                    ),
+                ),
+            )
+
+    detector = PersonDetector()
+    video_path = create_test_video(tmp_path / "sample.avi")
+    database_path = tmp_path / "runtime" / "cctv.db"
+    monkeypatch.setattr("cctv.workers.local_video.create_detector", lambda config: detector)
+    monkeypatch.setenv("CCTV_DETECTOR_TYPE", "custom")
+    monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
+    monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
+    monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "true")
+    monkeypatch.setenv("CCTV_RULES_ENABLED", "true")
+    monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
+    monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "runtime" / "cctv.jsonl"))
+    get_settings.cache_clear()
+    initialize_database(database_path)
+    rule_repository = RuleRepository(database_path)
+    rule = rule_repository.create_rule(
+        name="Black upper body",
+        source_name=video_path.name,
+        rule_type="visual_color",
+        class_name="person",
+        geometry={},
+        parameters={
+            "target_color": "black",
+            "window_size": 1,
+            "minimum_matches": 1,
+            "minimum_color_confidence": 0.35,
+            "cooldown_seconds": 30,
+            "hiperwall": {
+                "enabled": True,
+                "content_name": "Test camera",
+                "zone_id": "Alert Zone",
+                "display_seconds": 30,
+            },
+        },
+    )
+
+    try:
+        run_local_video_worker(
+            [
+                str(video_path),
+                "--analyze",
+                "--sample-fps",
+                "2",
+                "--max-samples",
+                "2",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    output = json.loads(capsys.readouterr().out.splitlines()[-1])
+    runs = DetectionRepository(database_path).list_analysis_runs()
+    events = rule_repository.list_events(rule_id=rule.id)
+    actions = DisplayActionRepository(database_path).list(analysis_run_id=runs.items[0].id)
+
+    assert output["analysis"]["upper_body_color"] == {
+        "processed_frames": 2,
+        "person_detections": 2,
+        "classified_crops": 2,
+        "skipped_crops": 0,
+        "color_counts": {"black": 2},
+    }
+    assert output["analysis"]["rules"]["emitted_event_count"] == 1
+    assert output["analysis"]["hiperwall"]["simulated_action_count"] == 1
+    assert events.total == 1
+    assert events.items[0].event_type == "upper_body_color_started"
+    assert events.items[0].payload["target_color"] == "black"
+    assert actions.total == 1
+    assert actions.items[0].request["target"]["zone_id"] == "Alert Zone"
+
+
 def test_local_video_cli_uses_interchangeable_detector_interface(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

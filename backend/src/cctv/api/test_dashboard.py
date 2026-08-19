@@ -61,6 +61,7 @@ from cctv.media import (
 router = APIRouter(tags=["test-dashboard"])
 _DASHBOARD_PATH = Path(__file__).resolve().parents[1] / "dashboard" / "page.html"
 _PEOPLE_PAGE_PATH = Path(__file__).resolve().parents[1] / "dashboard" / "people.html"
+_COLOR_EVENTS_PAGE_PATH = Path(__file__).resolve().parents[1] / "dashboard" / "color_events.html"
 _MAX_REGISTRATION_PHOTO_BYTES = 8 * 1024 * 1024
 _MAX_REGISTRATION_PHOTO_BASE64_LENGTH = 11_200_000
 
@@ -286,6 +287,12 @@ def dashboard_page(_: TestAccess) -> HTMLResponse:
 def identity_registration_page(_: TestAccess) -> HTMLResponse:
     """Serve the local person registration page from the API origin."""
     return HTMLResponse(_PEOPLE_PAGE_PATH.read_text(encoding="utf-8"))
+
+
+@router.get("/test-color-events", response_class=HTMLResponse)
+def color_event_page(_: TestAccess) -> HTMLResponse:
+    """Serve the local upper-body color event configuration page."""
+    return HTMLResponse(_COLOR_EVENTS_PAGE_PATH.read_text(encoding="utf-8"))
 
 
 @router.post(
