@@ -592,9 +592,15 @@ class AnalysisSupervisor:
                 entry.reconnect_count = _integer(record.get("reconnect_count"))
                 entry.last_message = "RTSP reconnect scheduled"
             elif event == "rtsp_worker_progress":
-                entry.status = AnalysisWorkerStatus.RUNNING
                 entry.processed_samples = _integer(record.get("processed_samples"))
-                entry.last_frame_at = self._now()
+                progress_status = _optional_text(record.get("status"))
+                if progress_status in (None, "running") and entry.processed_samples > 0:
+                    entry.status = AnalysisWorkerStatus.RUNNING
+                reported_last_frame_at = _optional_datetime(record.get("last_frame_at"))
+                if reported_last_frame_at is not None:
+                    entry.last_frame_at = reported_last_frame_at
+                elif "last_frame_at" not in record and entry.processed_samples > 0:
+                    entry.last_frame_at = self._now()
             elif event == "rule_event_emitted":
                 entry.last_event_at = self._now()
             elif event == "rtsp_worker_failed":
@@ -662,6 +668,7 @@ class AnalysisSupervisor:
                 "CCTV_TRACKER_MAX_IDLE_SECONDS": str(self.settings.tracker_max_idle_seconds),
                 "CCTV_TRACKER_CLASS_NAMES": self.settings.tracker_class_names,
                 "CCTV_PERSIST_DETECTIONS": "true",
+                "CCTV_FRAME_PERSISTENCE_MODE": self.settings.frame_persistence_mode.value,
                 "CCTV_RULES_ENABLED": "true",
                 "CCTV_HIPERWALL_EXECUTOR_ENABLED": "false",
                 "CCTV_HIPERWALL_DRY_RUN_ENABLED": str(
@@ -794,6 +801,18 @@ def _optional_text(value: object) -> str | None:
 
 def _integer(value: object) -> int:
     return int(value) if isinstance(value, int | float) else 0
+
+
+def _optional_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 __all__ = [

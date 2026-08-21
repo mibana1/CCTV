@@ -95,11 +95,14 @@ GPU가 없는 개발 PC에서도 코드·Compose·fallback 경로는 검증할 �
 Provider 실행·VRAM·다채널 처리량은 NVIDIA GPU 호스트에서 별도로 완료해야 합니다.
 
 YOLO가 활성화되면 `CCTV_PERSIST_DETECTIONS=true` 기본값에 따라 실행 정보,
-분석한 프레임과 검출 객체를 `CCTV_DATABASE_PATH`의 SQLite에 저장합니다. 각
-실행은 UUID로 구분되며 모델 파일명과 SHA-256, 임계값, FPS, 완료 상태를 함께
-기록합니다. 검출 객체가 없는 프레임도 저장하므로 처리 프레임 수와 검출 수를
-독립적으로 확인할 수 있습니다. 프레임과 그 검출 결과는 하나의 트랜잭션으로
-저장되며 실행 중 오류가 발생하면 실행 상태를 `failed`로 종료합니다.
+분석한 프레임과 검출 객체를 `CCTV_DATABASE_PATH`의 SQLite에 저장합니다.
+`CCTV_FRAME_PERSISTENCE_MODE`는 `all`(모든 분석 프레임, 기본값),
+`detections`(검출이 있는 프레임), `events`(규칙 이벤트가 있는 프레임) 중 하나를
+선택합니다. 규칙 이벤트나 Hiperwall 액션이 있는 프레임은 모드와 관계없이 프레임,
+검출, 이벤트, 액션을 하나의 트랜잭션으로 저장합니다. `CCTV_PERSIST_DETECTIONS`는
+분석 실행과 규칙 엔진의 영속성 기반을 켜는 기존 설정이므로 저장량 조절 용도로
+끄지 않습니다. 각 실행은 UUID로 구분되며 모델 파일명과 SHA-256, 임계값, FPS,
+완료 상태를 함께 기록합니다.
 
 ```bash
 uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10 --save-snapshots

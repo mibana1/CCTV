@@ -6,13 +6,14 @@ import argparse
 import json
 import logging
 import signal
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from math import isfinite
 from pathlib import Path
 from threading import Event, Lock
-from time import perf_counter
+from time import monotonic
 from types import FrameType
 
 from cctv.core.logging import configure_logging, shutdown_logging
@@ -58,6 +59,10 @@ from cctv.workers.local_video import (
 
 logger = logging.getLogger(__name__)
 _TIMESTAMP_EPSILON_SECONDS = 1e-9
+_DEFAULT_PROGRESS_INTERVAL_SECONDS = 5.0
+
+Clock = Callable[[], float]
+NowFactory = Callable[[], datetime]
 
 
 class RtspStopReason(StrEnum):
@@ -98,17 +103,25 @@ class RtspWorker:
         frame_consumer: FrameConsumer | None = None,
         max_samples: int | None = None,
         emit_progress: bool = False,
+        progress_interval_seconds: float = _DEFAULT_PROGRESS_INTERVAL_SECONDS,
+        monotonic_clock: Clock = monotonic,
+        now_factory: NowFactory | None = None,
     ) -> None:
         if not isfinite(sample_fps) or sample_fps <= 0:
             raise ValueError("sample_fps must be a finite number greater than zero")
         if max_samples is not None and max_samples <= 0:
             raise ValueError("max_samples must be greater than zero when provided")
+        if not isfinite(progress_interval_seconds) or progress_interval_seconds <= 0:
+            raise ValueError("progress_interval_seconds must be a finite number greater than zero")
 
         self.reader = reader
         self.sample_fps = float(sample_fps)
         self.frame_consumer = frame_consumer
         self.max_samples = max_samples
         self.emit_progress = emit_progress
+        self.progress_interval_seconds = float(progress_interval_seconds)
+        self._monotonic = monotonic_clock
+        self._now = now_factory or (lambda: datetime.now(UTC))
         self._status = WorkerStatus.IDLE
         self._status_lock = Lock()
         self._stop_event = Event()
@@ -133,7 +146,9 @@ class RtspWorker:
     def execute(self) -> RtspWorkerResult:
         """Consume, sample, and dispatch frames until stopped or bounded for a test."""
         self._begin_execution()
-        started_at = perf_counter()
+        started_at = self._monotonic()
+        last_progress_at = started_at
+        progress_sample_count = 0
         sample_interval_seconds = 1.0 / self.sample_fps
         next_sample_at = 0.0
         processed_samples = 0
@@ -141,8 +156,43 @@ class RtspWorker:
         last_source_index: int | None = None
         first_timestamp_seconds: float | None = None
         last_timestamp_seconds: float | None = None
+        last_frame_at: datetime | None = None
         stop_reason = RtspStopReason.STOP_REQUESTED
         frame_iterator = self.reader.frames(stop_event=self._stop_event)
+
+        def emit_progress(*, reason: str, force: bool = False) -> None:
+            nonlocal last_progress_at, progress_sample_count
+            if not self.emit_progress:
+                return
+
+            emitted_at = self._monotonic()
+            interval_seconds = max(0.0, emitted_at - last_progress_at)
+            if not force and interval_seconds < self.progress_interval_seconds:
+                return
+
+            interval_samples = processed_samples - progress_sample_count
+            interval_fps = interval_samples / interval_seconds if interval_seconds > 0 else 0.0
+            logger.info(
+                "RTSP worker progress updated",
+                extra={
+                    "event": "rtsp_worker_progress",
+                    "source_name": self.reader.source_name,
+                    "status": self.status,
+                    "reason": reason,
+                    "processed_samples": processed_samples,
+                    "max_samples": self.max_samples,
+                    "interval_samples": interval_samples,
+                    "interval_seconds": round(interval_seconds, 6),
+                    "interval_fps": round(interval_fps, 3),
+                    "progress_interval_seconds": self.progress_interval_seconds,
+                    "source_index": last_source_index,
+                    "sample_index": processed_samples - 1 if processed_samples else None,
+                    "timestamp_seconds": last_timestamp_seconds,
+                    "last_frame_at": _format_timestamp(last_frame_at),
+                },
+            )
+            last_progress_at = emitted_at
+            progress_sample_count = processed_samples
 
         logger.info(
             "RTSP worker started",
@@ -151,8 +201,10 @@ class RtspWorker:
                 "source_name": self.reader.source_name,
                 "sample_fps": self.sample_fps,
                 "max_samples": self.max_samples,
+                "progress_interval_seconds": self.progress_interval_seconds,
             },
         )
+        emit_progress(reason="started", force=True)
         try:
             for raw_frame in frame_iterator:
                 if self._stop_event.is_set():
@@ -169,24 +221,13 @@ class RtspWorker:
                 if self.frame_consumer is not None:
                     self.frame_consumer(sampled_frame)
                 processed_samples += 1
-                if self.emit_progress:
-                    logger.info(
-                        "RTSP worker progress updated",
-                        extra={
-                            "event": "rtsp_worker_progress",
-                            "source_name": self.reader.source_name,
-                            "processed_samples": processed_samples,
-                            "max_samples": self.max_samples,
-                            "source_index": sampled_frame.source_index,
-                            "sample_index": sampled_frame.sample_index,
-                            "timestamp_seconds": sampled_frame.timestamp_seconds,
-                        },
-                    )
                 if first_source_index is None:
                     first_source_index = sampled_frame.source_index
                     first_timestamp_seconds = sampled_frame.timestamp_seconds
                 last_source_index = sampled_frame.source_index
                 last_timestamp_seconds = sampled_frame.timestamp_seconds
+                last_frame_at = self._now()
+                emit_progress(reason="interval")
 
                 while next_sample_at <= raw_frame.timestamp_seconds + _TIMESTAMP_EPSILON_SECONDS:
                     next_sample_at += sample_interval_seconds
@@ -204,7 +245,7 @@ class RtspWorker:
             stop_reason = RtspStopReason.INTERRUPTED
             final_status = WorkerStatus.STOPPED
             self._set_status(final_status)
-        except Exception:
+        except Exception as error:
             self._set_status(WorkerStatus.FAILED)
             logger.exception(
                 "RTSP worker failed",
@@ -212,11 +253,15 @@ class RtspWorker:
                     "event": "rtsp_worker_failed",
                     "source_name": self.reader.source_name,
                     "processed_samples": processed_samples,
+                    "error_type": type(error).__name__,
                 },
             )
             raise
         finally:
-            frame_iterator.close()
+            try:
+                frame_iterator.close()
+            finally:
+                emit_progress(reason="finished", force=True)
 
         statistics = self.reader.statistics
         result = RtspWorkerResult(
@@ -229,7 +274,7 @@ class RtspWorker:
             last_source_index=last_source_index,
             first_timestamp_seconds=first_timestamp_seconds,
             last_timestamp_seconds=last_timestamp_seconds,
-            elapsed_seconds=round(perf_counter() - started_at, 6),
+            elapsed_seconds=round(self._monotonic() - started_at, 6),
             connection_count=statistics.connection_count,
             reconnect_count=statistics.reconnect_count,
             decoded_frames=statistics.decoded_frames,
@@ -258,6 +303,14 @@ class RtspWorker:
     def _set_status(self, status: WorkerStatus) -> None:
         with self._status_lock:
             self._status = status
+
+
+def _format_timestamp(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
@@ -479,7 +532,12 @@ def run(argv: Sequence[str] | None = None) -> None:
                     if hiperwall_planner is not None and analysis_run is not None
                     else ()
                 )
-                if repository is not None and analysis_run is not None:
+                should_persist_frame = settings.frame_persistence_mode.should_persist(
+                    has_detections=bool(result.detections),
+                    has_rule_events=bool(rule_events),
+                    has_display_actions=bool(display_actions),
+                )
+                if repository is not None and analysis_run is not None and should_persist_frame:
                     outcome = repository.save_frame_with_outcome(
                         analysis_run.id,
                         result,
@@ -633,6 +691,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         if detector is not None:
             output["analysis"] = asdict(detector.summary)
             output["analysis"]["persistence_enabled"] = settings.persist_detections
+            output["analysis"]["frame_persistence_mode"] = settings.frame_persistence_mode
             output["analysis"]["analysis_run_id"] = (
                 analysis_run.id if analysis_run is not None else None
             )

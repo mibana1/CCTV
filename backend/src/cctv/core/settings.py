@@ -29,6 +29,28 @@ class AiDevice(StrEnum):
     CUDA = "cuda"
 
 
+class FramePersistenceMode(StrEnum):
+    """Select which analyzed frames are persisted without disabling event processing."""
+
+    ALL = "all"
+    DETECTIONS = "detections"
+    EVENTS = "events"
+
+    def should_persist(
+        self,
+        *,
+        has_detections: bool,
+        has_rule_events: bool,
+        has_display_actions: bool,
+    ) -> bool:
+        """Keep event/action frames so their foreign-key graph is saved atomically."""
+        if has_rule_events or has_display_actions:
+            return True
+        if self is FramePersistenceMode.ALL:
+            return True
+        return self is FramePersistenceMode.DETECTIONS and has_detections
+
+
 class Settings(BaseSettings):
     """Validated runtime configuration.
 
@@ -70,6 +92,7 @@ class Settings(BaseSettings):
     tracker_max_idle_seconds: float = Field(default=12.0, gt=0, le=300)
     tracker_class_names: str = "person"
     persist_detections: bool = True
+    frame_persistence_mode: FramePersistenceMode = FramePersistenceMode.ALL
     rules_enabled: bool = True
     analysis_supervisor_enabled: bool = False
     analysis_supervisor_reconcile_interval_seconds: float = Field(default=5.0, ge=1, le=300)
@@ -193,10 +216,10 @@ class Settings(BaseSettings):
             raise ValueError("log level must be CRITICAL, ERROR, WARNING, INFO, or DEBUG")
         return normalized
 
-    @field_validator("app_mode", "ai_device", mode="before")
+    @field_validator("app_mode", "ai_device", "frame_persistence_mode", mode="before")
     @classmethod
     def normalize_execution_mode(cls, value: object) -> object:
-        """Accept case-insensitive execution mode and device values."""
+        """Accept case-insensitive execution, device, and persistence mode values."""
         return value.lower() if isinstance(value, str) else value
 
     @field_validator("ai_cuda_gpu_mem_limit_mb", mode="before")

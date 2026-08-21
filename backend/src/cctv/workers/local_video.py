@@ -510,7 +510,16 @@ def run(argv: Sequence[str] | None = None) -> None:
                     if hiperwall_planner is not None and analysis_run is not None
                     else ()
                 )
-                if detection_repository is not None and analysis_run is not None:
+                should_persist_frame = settings.frame_persistence_mode.should_persist(
+                    has_detections=bool(result.detections),
+                    has_rule_events=bool(rule_events),
+                    has_display_actions=bool(display_actions),
+                )
+                if (
+                    detection_repository is not None
+                    and analysis_run is not None
+                    and should_persist_frame
+                ):
                     outcome = detection_repository.save_frame_with_outcome(
                         analysis_run.id,
                         result,
@@ -655,6 +664,7 @@ def run(argv: Sequence[str] | None = None) -> None:
         if detector is not None:
             output["analysis"] = asdict(detector.summary)
             output["analysis"]["persistence_enabled"] = settings.persist_detections
+            output["analysis"]["frame_persistence_mode"] = settings.frame_persistence_mode
             output["analysis"]["analysis_run_id"] = (
                 analysis_run.id if analysis_run is not None else None
             )

@@ -148,10 +148,16 @@ def test_local_video_worker_is_single_use(tmp_path: Path) -> None:
         worker.execute()
 
 
-def test_local_video_cli_persists_yolo_results(
+@pytest.mark.parametrize(
+    ("frame_persistence_mode", "expected_persisted_frames"),
+    [("all", 2), ("detections", 2), ("events", 1)],
+)
+def test_local_video_cli_persists_yolo_results_by_frame_policy(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
+    frame_persistence_mode: str,
+    expected_persisted_frames: int,
 ) -> None:
     class FakeNetwork:
         def __init__(self) -> None:
@@ -177,6 +183,7 @@ def test_local_video_cli_persists_yolo_results(
     monkeypatch.setenv("CCTV_AI_DEVICE", "cpu")
     monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "true")
+    monkeypatch.setenv("CCTV_FRAME_PERSISTENCE_MODE", frame_persistence_mode)
     monkeypatch.setenv("CCTV_RULES_ENABLED", "true")
     monkeypatch.setenv("CCTV_DATABASE_PATH", str(database_path))
     monkeypatch.setenv("CCTV_LOG_PATH", str(tmp_path / "runtime" / "cctv.jsonl"))
@@ -215,6 +222,7 @@ def test_local_video_cli_persists_yolo_results(
     runs = repository.list_analysis_runs()
 
     assert output["analysis"]["persistence_enabled"] is True
+    assert output["analysis"]["frame_persistence_mode"] == frame_persistence_mode
     assert output["analysis"]["analysis_run_id"] == runs.items[0].id
     assert output["analysis"]["rules"] == {
         "configured": True,
@@ -232,9 +240,12 @@ def test_local_video_cli_persists_yolo_results(
     }
     assert runs.total == 1
     assert runs.items[0].status is AnalysisRunStatus.COMPLETED
-    assert runs.items[0].processed_frames == 2
-    assert runs.items[0].total_detections == 2
-    assert repository.list_detections(analysis_run_id=runs.items[0].id).total == 2
+    assert runs.items[0].processed_frames == expected_persisted_frames
+    assert runs.items[0].total_detections == expected_persisted_frames
+    assert (
+        repository.list_detections(analysis_run_id=runs.items[0].id).total
+        == expected_persisted_frames
+    )
     assert rule_repository.list_events(analysis_run_id=runs.items[0].id).total == 1
     assert DisplayActionRepository(database_path).list(analysis_run_id=runs.items[0].id).total == 1
 

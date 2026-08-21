@@ -382,6 +382,7 @@ class TestSessionManager:
                 "CCTV_TRACKING_ENABLED": str(self.settings.tracking_enabled).lower(),
                 "CCTV_TRACKER_CLASS_NAMES": self.settings.tracker_class_names,
                 "CCTV_PERSIST_DETECTIONS": "true",
+                "CCTV_FRAME_PERSISTENCE_MODE": self.settings.frame_persistence_mode.value,
                 "CCTV_RULES_ENABLED": str(self.settings.rules_enabled).lower(),
                 "CCTV_HIPERWALL_DRY_RUN_ENABLED": str(
                     self.settings.hiperwall_dry_run_enabled

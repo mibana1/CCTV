@@ -102,7 +102,7 @@ def test_supervisor_starts_reloads_and_stops_one_worker_per_camera(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    settings = _settings(tmp_path)
+    settings = _settings(tmp_path, frame_persistence_mode="events")
     initialize_database(settings.database_path)
     cameras = CameraRepository(settings.database_path)
     rules = RuleRepository(settings.database_path)
@@ -139,6 +139,7 @@ def test_supervisor_starts_reloads_and_stops_one_worker_per_camera(
     assert first[1]["CCTV_AI_ALLOW_CPU_FALLBACK"] == "false"
     assert first[1]["CCTV_AI_CUDA_DEVICE_ID"] == "0"
     assert "CCTV_AI_CUDA_GPU_MEM_LIMIT_MB" not in first[1]
+    assert first[1]["CCTV_FRAME_PERSISTENCE_MODE"] == "events"
     assert first[1]["CCTV_HIPERWALL_EXECUTOR_ENABLED"] == "false"
     assert "HIPERWALL_TOKEN" not in first[1]
 
@@ -312,6 +313,7 @@ def test_worker_output_updates_progress_and_reconnect_state(tmp_path: Path) -> N
     rules = RuleRepository(settings.database_path)
     camera = cameras.create_camera(name="Lobby", stream_path="camera")
     _create_color_rule(rules, camera.stream_path, "Rule")
+    reported_frame_at = datetime(2026, 8, 21, 1, 2, 3, 456000, tzinfo=UTC)
     records = (
         json.dumps(
             {
@@ -325,7 +327,14 @@ def test_worker_output_updates_progress_and_reconnect_state(tmp_path: Path) -> N
         ),
         json.dumps({"event": "analysis_run_created", "analysis_run_id": "run-1"}),
         json.dumps({"event": "rtsp_source_connected", "connection_count": 1}),
-        json.dumps({"event": "rtsp_worker_progress", "processed_samples": 5}),
+        json.dumps(
+            {
+                "event": "rtsp_worker_progress",
+                "status": "running",
+                "processed_samples": 5,
+                "last_frame_at": "2026-08-21T01:02:03.456Z",
+            }
+        ),
         json.dumps({"event": "rule_event_emitted"}),
         json.dumps({"event": "rtsp_source_reconnect_scheduled", "reconnect_count": 1}),
     )
@@ -358,7 +367,7 @@ def test_worker_output_updates_progress_and_reconnect_state(tmp_path: Path) -> N
     assert snapshot.fallback_reason == "CUDAExecutionProvider is unavailable"
     assert snapshot.processed_samples == 5
     assert snapshot.status is AnalysisWorkerStatus.RECONNECTING
-    assert snapshot.last_frame_at is not None
+    assert snapshot.last_frame_at == reported_frame_at
     assert snapshot.last_event_at is not None
 
 

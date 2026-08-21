@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from cctv.core.settings import AiDevice, AppMode, Settings
+from cctv.core.settings import AiDevice, AppMode, FramePersistenceMode, Settings
 
 
 def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> None:
@@ -40,6 +40,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_TRACKER_MAX_MISSED_FRAMES", "6")
     monkeypatch.setenv("CCTV_TRACKER_MAX_IDLE_SECONDS", "4.5")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
+    monkeypatch.setenv("CCTV_FRAME_PERSISTENCE_MODE", "EVENTS")
     monkeypatch.setenv("CCTV_HIPERWALL_DRY_RUN_ENABLED", "false")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
@@ -113,6 +114,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.tracker_max_missed_frames == 6
     assert settings.tracker_max_idle_seconds == 4.5
     assert settings.persist_detections is False
+    assert settings.frame_persistence_mode is FramePersistenceMode.EVENTS
     assert settings.hiperwall_dry_run_enabled is False
     assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
@@ -220,6 +222,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_TRACKING_ENABLED",
         "CCTV_TRACKER_CLASS_NAMES",
         "CCTV_PERSIST_DETECTIONS",
+        "CCTV_FRAME_PERSISTENCE_MODE",
         "CCTV_HIPERWALL_DRY_RUN_ENABLED",
         "CCTV_LOCAL_VIDEO_PATH",
     ):
@@ -261,6 +264,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.tracker_max_missed_frames == 10
     assert settings.tracker_max_idle_seconds == 12
     assert settings.persist_detections is True
+    assert settings.frame_persistence_mode is FramePersistenceMode.ALL
     assert settings.hiperwall_dry_run_enabled is True
     assert settings.local_video_path is None
     assert settings.external_actions_enabled is False
@@ -289,6 +293,7 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("tracker_iou_threshold", 1.1),
         ("tracker_max_missed_frames", -1),
         ("tracker_max_idle_seconds", 0),
+        ("frame_persistence_mode", "sampled"),
         ("snapshot_jpeg_quality", 0),
         ("snapshot_jpeg_quality", 101),
         ("face_detection_score_threshold", 0),
@@ -303,6 +308,35 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
 def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **{field: value})
+
+
+@pytest.mark.parametrize(
+    ("mode", "has_detections", "has_rule_events", "has_display_actions", "expected"),
+    [
+        (FramePersistenceMode.ALL, False, False, False, True),
+        (FramePersistenceMode.DETECTIONS, False, False, False, False),
+        (FramePersistenceMode.DETECTIONS, True, False, False, True),
+        (FramePersistenceMode.DETECTIONS, False, True, False, True),
+        (FramePersistenceMode.EVENTS, True, False, False, False),
+        (FramePersistenceMode.EVENTS, False, True, False, True),
+        (FramePersistenceMode.EVENTS, False, False, True, True),
+    ],
+)
+def test_frame_persistence_mode_keeps_event_graph_atomic(
+    mode: FramePersistenceMode,
+    has_detections: bool,
+    has_rule_events: bool,
+    has_display_actions: bool,
+    expected: bool,
+) -> None:
+    assert (
+        mode.should_persist(
+            has_detections=has_detections,
+            has_rule_events=has_rule_events,
+            has_display_actions=has_display_actions,
+        )
+        is expected
+    )
 
 
 def test_settings_live_mode_requires_hyperwall_url() -> None:
