@@ -104,6 +104,48 @@ YOLO가 활성화되면 `CCTV_PERSIST_DETECTIONS=true` 기본값에 따라 실�
 끄지 않습니다. 각 실행은 UUID로 구분되며 모델 파일명과 SHA-256, 임계값, FPS,
 완료 상태를 함께 기록합니다.
 
+보존 기간은 임시 기본값으로 일반 프레임·검출·추적 7일, 규칙 이벤트·Hiperwall
+감사 이력 90일, 스냅샷 30일입니다. 값은 각각
+`CCTV_RETENTION_FRAME_DAYS`, `CCTV_RETENTION_AUDIT_DAYS`,
+`CCTV_RETENTION_SNAPSHOT_DAYS`로 교체할 수 있습니다. 이벤트 프레임은 감사 기간까지
+보호하며 활성 Hiperwall 작업과 현재 표시 중인 이벤트는 자동 삭제하지 않습니다.
+등록 인물 사진·임베딩은 보존 Worker 대상이 아닙니다. 자동 실행은
+`CCTV_RETENTION_ENABLED=false`, 실제 삭제는 `CCTV_RETENTION_DRY_RUN=true`가
+기본이므로 명시적으로 활성화해야 합니다.
+
+```bash
+uv run cctv-retention --dry-run
+uv run cctv-retention --apply
+```
+
+정리는 lease를 획득한 Backend 하나에서만 batch 단위로 실행되며, 실행 로그에는
+대상/삭제 건수, 소요 시간, 실패 유형, 실행 전후 DB·WAL 크기와
+`freelist_count`가 기록됩니다.
+
+실제 삭제 실행 뒤에는 기본적으로 `wal_checkpoint(PASSIVE)`를 수행합니다.
+`CCTV_RETENTION_TRUNCATE_CHECKPOINT_ENABLED=true`인 경우에도 TRUNCATE checkpoint는
+임시 유지보수 창(기본 `18:00 UTC`부터 60분, KST 기준 다음 날 03:00) 안이면서
+활성 분석 실행·분석 Worker lease·처리 중 Hiperwall 작업이 없을 때만 실행하고,
+그 외에는 PASSIVE로 낮춥니다. 시작 시각과 길이는
+`CCTV_RETENTION_MAINTENANCE_WINDOW_START_HOUR_UTC`,
+`CCTV_RETENTION_MAINTENANCE_WINDOW_DURATION_MINUTES`로 변경할 수 있습니다.
+
+VACUUM은 기본 비활성화입니다. `CCTV_RETENTION_VACUUM_ENABLED=true`로 켜더라도
+유지보수 창 안에서 `freelist_count/page_count`가 기본 25% 이상이고 빈 페이지가
+10,000개 이상일 때만 후보가 됩니다. 분석 또는 Hiperwall 작업이 실행 중이면
+건너뛰며, DB 크기의 기본 3배 이상 여유 공간을 DB와 백업 경로에서 각각 확인한 뒤
+SQLite 온라인 백업과 `quick_check`를 성공한 경우에만 VACUUM을 실행합니다. 백업은
+`CCTV_RETENTION_VACUUM_BACKUP_DIR`에 시각별 파일로 보존됩니다. 삭제된 빈 페이지는
+VACUUM 전에도 SQLite가 새 쓰기에 재사용할 수 있으므로 즉시 파일 크기를 줄이지
+않습니다.
+
+현재 Backend는 `sqlite3`, SQLite migration, PRAGMA와 WAL 유지보수에 직접
+의존하므로 PostgreSQL 연결 환경변수는 지원하지 않습니다. 다중 Worker lock 오류,
+보존 삭제 간섭, API/Worker 경쟁, 다중 Backend 또는 GPU 쓰기 병목이 측정될 때
+별도 전환 단계로 진행합니다. 임시 측정 기준, 목표 Repository 경계와 이행 순서는
+[PostgreSQL 전환 검토 문서](../docs/architecture/POSTGRESQL_MIGRATION_REVIEW.md)에
+정리되어 있습니다.
+
 ```bash
 uv run cctv-local-worker ../video/testvideo1.mp4 --sample-fps 2 --max-samples 10 --save-snapshots
 uv run cctv-local-worker ../video/testvideo1.mp4 --max-samples 10 --analyze --model-path ../artifacts/models/model.onnx

@@ -19,6 +19,7 @@ dependencies = [
 cctv = "cctv.main:run"
 cctv-local-worker = "cctv.workers.local_video:run"
 cctv-rtsp-worker = "cctv.workers.rtsp:run"
+cctv-retention = "cctv.workers.retention:run"
 cctv-register-faces = "cctv.identity.cli:run"
 
 [build-system]

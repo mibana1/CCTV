@@ -94,6 +94,26 @@ class Settings(BaseSettings):
     persist_detections: bool = True
     frame_persistence_mode: FramePersistenceMode = FramePersistenceMode.ALL
     rules_enabled: bool = True
+    # Temporary retention defaults; keep configurable until production capacity is measured.
+    retention_enabled: bool = False
+    retention_dry_run: bool = True
+    retention_frame_days: int = Field(default=7, ge=1, le=3_650)
+    retention_audit_days: int = Field(default=90, ge=1, le=3_650)
+    retention_snapshot_days: int = Field(default=30, ge=1, le=3_650)
+    retention_interval_seconds: float = Field(default=86_400, ge=60, le=604_800)
+    retention_batch_size: int = Field(default=500, ge=1, le=1_000)
+    retention_max_batches_per_run: int = Field(default=20, ge=1, le=100)
+    retention_lease_seconds: float = Field(default=300, ge=30, le=3_600)
+    retention_checkpoint_enabled: bool = True
+    retention_truncate_checkpoint_enabled: bool = False
+    # Temporary UTC maintenance window: 18:00 UTC is 03:00 KST the following day.
+    retention_maintenance_window_start_hour_utc: int = Field(default=18, ge=0, le=23)
+    retention_maintenance_window_duration_minutes: int = Field(default=60, ge=1, le=1_440)
+    retention_vacuum_enabled: bool = False
+    retention_vacuum_freelist_ratio_threshold: float = Field(default=0.25, ge=0.05, le=0.95)
+    retention_vacuum_min_freelist_pages: int = Field(default=10_000, ge=1, le=10_000_000)
+    retention_vacuum_free_space_multiplier: float = Field(default=3.0, ge=2.0, le=10.0)
+    retention_vacuum_backup_dir: Path = Path("runtime/backups/pre-vacuum")
     analysis_supervisor_enabled: bool = False
     analysis_supervisor_reconcile_interval_seconds: float = Field(default=5.0, ge=1, le=300)
     analysis_supervisor_max_workers: int = Field(default=2, ge=1, le=64)
@@ -360,8 +380,23 @@ class Settings(BaseSettings):
         return normalized
 
     @model_validator(mode="after")
-    def validate_live_mode(self) -> Self:
-        """Fail closed when LIVE mode lacks required Hiperwall configuration."""
+    def validate_cross_field_settings(self) -> Self:
+        """Validate retention, retry, supervisor, tracker, and LIVE-mode relationships."""
+        if self.retention_audit_days < self.retention_frame_days:
+            raise ValueError(
+                "CCTV_RETENTION_AUDIT_DAYS must be greater than or equal to "
+                "CCTV_RETENTION_FRAME_DAYS"
+            )
+        if self.retention_truncate_checkpoint_enabled and not self.retention_checkpoint_enabled:
+            raise ValueError(
+                "CCTV_RETENTION_CHECKPOINT_ENABLED must be true when "
+                "CCTV_RETENTION_TRUNCATE_CHECKPOINT_ENABLED=true"
+            )
+        if self.retention_vacuum_enabled and not self.retention_checkpoint_enabled:
+            raise ValueError(
+                "CCTV_RETENTION_CHECKPOINT_ENABLED must be true when "
+                "CCTV_RETENTION_VACUUM_ENABLED=true"
+            )
         if self.rtsp_reconnect_max_seconds < self.rtsp_reconnect_initial_seconds:
             raise ValueError(
                 "CCTV_RTSP_RECONNECT_MAX_SECONDS must be greater than or equal to "

@@ -21,7 +21,7 @@ from cctv.core.settings import AppMode, Settings, get_settings
 from cctv.dashboard import TestSessionManager
 from cctv.db import CameraRepository, initialize_database
 from cctv.hiperwall import HiperwallActionWorker, HiperwallClient
-from cctv.workers import AnalysisSupervisor
+from cctv.workers import AnalysisSupervisor, RetentionWorker
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ def create_app(
     camera_manager: CameraManager | None = None,
     hiperwall_client: HiperwallClient | None = None,
     analysis_supervisor: AnalysisSupervisor | None = None,
+    retention_worker: RetentionWorker | None = None,
 ) -> FastAPI:
     """Build an application with validated settings and database startup."""
     application_settings = settings or get_settings()
@@ -55,6 +56,8 @@ def create_app(
                 "detector_enabled": application_settings.object_detection_enabled,
                 "detector_type": application_settings.detector_type,
                 "analysis_supervisor_enabled": (application_settings.analysis_supervisor_enabled),
+                "retention_enabled": application_settings.retention_enabled,
+                "retention_dry_run": application_settings.retention_dry_run,
             },
         )
         try:
@@ -80,6 +83,7 @@ def create_app(
         camera_reconciler: CameraReconciler | None = None
         hiperwall_worker: HiperwallActionWorker | None = None
         active_analysis_supervisor = analysis_supervisor
+        active_retention_worker = retention_worker
         if (
             application_settings.app_mode is AppMode.LIVE
             and application_settings.hiperwall_executor_enabled
@@ -118,6 +122,11 @@ def create_app(
         if active_analysis_supervisor is not None:
             active_analysis_supervisor.start()
         application.state.analysis_supervisor = active_analysis_supervisor
+        if active_retention_worker is None and application_settings.retention_enabled:
+            active_retention_worker = RetentionWorker(application_settings)
+        if active_retention_worker is not None:
+            active_retention_worker.start()
+        application.state.retention_worker = active_retention_worker
         logger.info(
             "Application startup complete",
             extra={
@@ -128,6 +137,8 @@ def create_app(
         try:
             yield
         finally:
+            if active_retention_worker is not None:
+                active_retention_worker.stop()
             if active_analysis_supervisor is not None:
                 active_analysis_supervisor.stop()
             if hiperwall_worker is not None:

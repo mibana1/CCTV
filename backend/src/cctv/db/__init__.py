@@ -58,6 +58,7 @@ from cctv.db.identities import (
     IdentityRepository,
     normalize_embedding,
 )
+from cctv.db.maintenance_leases import MaintenanceLeaseRepository
 from cctv.db.person_instances import (
     PersonInstancePage,
     PersonInstanceRecord,
@@ -65,6 +66,13 @@ from cctv.db.person_instances import (
     PersonInstanceRunSummary,
     TrackIdentityLinkPage,
     TrackIdentityLinkRecord,
+)
+from cctv.db.retention import (
+    DatabaseActivity,
+    RetentionCounts,
+    RetentionDatabaseMetrics,
+    RetentionRepository,
+    WalCheckpointResult,
 )
 from cctv.db.rules import (
     RuleEventPage,
@@ -90,6 +98,7 @@ __all__ = [
     "CameraRecord",
     "CameraRepository",
     "CameraSourceRecord",
+    "DatabaseActivity",
     "DatabaseHealth",
     "DatabaseState",
     "DetectionPage",
@@ -113,10 +122,14 @@ __all__ = [
     "IdentityPage",
     "IdentityRecord",
     "IdentityRepository",
+    "MaintenanceLeaseRepository",
     "PersonInstancePage",
     "PersonInstanceRecord",
     "PersonInstanceRepository",
     "PersonInstanceRunSummary",
+    "RetentionCounts",
+    "RetentionDatabaseMetrics",
+    "RetentionRepository",
     "RuleEventPage",
     "RuleEventRecord",
     "RulePage",
@@ -128,6 +141,7 @@ __all__ = [
     "TrackObservationRecord",
     "TrackPage",
     "TrackRecord",
+    "WalCheckpointResult",
     "check_database_health",
     "connect_database",
     "initialize_database",

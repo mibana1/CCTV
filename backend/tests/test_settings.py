@@ -12,6 +12,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     local_video_path = tmp_path / "samples" / "test.mp4"
     snapshot_dir = tmp_path / "snapshots"
     identity_photo_dir = tmp_path / "identity-images"
+    vacuum_backup_dir = tmp_path / "vacuum-backups"
     face_detection_model_path = tmp_path / "models" / "yunet.onnx"
     face_embedding_model_path = tmp_path / "models" / "sface.onnx"
     model_classes_path = tmp_path / "models" / "classes.txt"
@@ -41,6 +42,24 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_TRACKER_MAX_IDLE_SECONDS", "4.5")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "false")
     monkeypatch.setenv("CCTV_FRAME_PERSISTENCE_MODE", "EVENTS")
+    monkeypatch.setenv("CCTV_RETENTION_ENABLED", "true")
+    monkeypatch.setenv("CCTV_RETENTION_DRY_RUN", "false")
+    monkeypatch.setenv("CCTV_RETENTION_FRAME_DAYS", "14")
+    monkeypatch.setenv("CCTV_RETENTION_AUDIT_DAYS", "180")
+    monkeypatch.setenv("CCTV_RETENTION_SNAPSHOT_DAYS", "45")
+    monkeypatch.setenv("CCTV_RETENTION_INTERVAL_SECONDS", "3600")
+    monkeypatch.setenv("CCTV_RETENTION_BATCH_SIZE", "250")
+    monkeypatch.setenv("CCTV_RETENTION_MAX_BATCHES_PER_RUN", "8")
+    monkeypatch.setenv("CCTV_RETENTION_LEASE_SECONDS", "120")
+    monkeypatch.setenv("CCTV_RETENTION_CHECKPOINT_ENABLED", "true")
+    monkeypatch.setenv("CCTV_RETENTION_TRUNCATE_CHECKPOINT_ENABLED", "true")
+    monkeypatch.setenv("CCTV_RETENTION_MAINTENANCE_WINDOW_START_HOUR_UTC", "21")
+    monkeypatch.setenv("CCTV_RETENTION_MAINTENANCE_WINDOW_DURATION_MINUTES", "90")
+    monkeypatch.setenv("CCTV_RETENTION_VACUUM_ENABLED", "true")
+    monkeypatch.setenv("CCTV_RETENTION_VACUUM_FREELIST_RATIO_THRESHOLD", "0.4")
+    monkeypatch.setenv("CCTV_RETENTION_VACUUM_MIN_FREELIST_PAGES", "5000")
+    monkeypatch.setenv("CCTV_RETENTION_VACUUM_FREE_SPACE_MULTIPLIER", "4")
+    monkeypatch.setenv("CCTV_RETENTION_VACUUM_BACKUP_DIR", str(vacuum_backup_dir))
     monkeypatch.setenv("CCTV_HIPERWALL_DRY_RUN_ENABLED", "false")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
@@ -115,6 +134,24 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.tracker_max_idle_seconds == 4.5
     assert settings.persist_detections is False
     assert settings.frame_persistence_mode is FramePersistenceMode.EVENTS
+    assert settings.retention_enabled is True
+    assert settings.retention_dry_run is False
+    assert settings.retention_frame_days == 14
+    assert settings.retention_audit_days == 180
+    assert settings.retention_snapshot_days == 45
+    assert settings.retention_interval_seconds == 3_600
+    assert settings.retention_batch_size == 250
+    assert settings.retention_max_batches_per_run == 8
+    assert settings.retention_lease_seconds == 120
+    assert settings.retention_checkpoint_enabled is True
+    assert settings.retention_truncate_checkpoint_enabled is True
+    assert settings.retention_maintenance_window_start_hour_utc == 21
+    assert settings.retention_maintenance_window_duration_minutes == 90
+    assert settings.retention_vacuum_enabled is True
+    assert settings.retention_vacuum_freelist_ratio_threshold == 0.4
+    assert settings.retention_vacuum_min_freelist_pages == 5_000
+    assert settings.retention_vacuum_free_space_multiplier == 4
+    assert settings.retention_vacuum_backup_dir == vacuum_backup_dir
     assert settings.hiperwall_dry_run_enabled is False
     assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
@@ -223,6 +260,24 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_TRACKER_CLASS_NAMES",
         "CCTV_PERSIST_DETECTIONS",
         "CCTV_FRAME_PERSISTENCE_MODE",
+        "CCTV_RETENTION_ENABLED",
+        "CCTV_RETENTION_DRY_RUN",
+        "CCTV_RETENTION_FRAME_DAYS",
+        "CCTV_RETENTION_AUDIT_DAYS",
+        "CCTV_RETENTION_SNAPSHOT_DAYS",
+        "CCTV_RETENTION_INTERVAL_SECONDS",
+        "CCTV_RETENTION_BATCH_SIZE",
+        "CCTV_RETENTION_MAX_BATCHES_PER_RUN",
+        "CCTV_RETENTION_LEASE_SECONDS",
+        "CCTV_RETENTION_CHECKPOINT_ENABLED",
+        "CCTV_RETENTION_TRUNCATE_CHECKPOINT_ENABLED",
+        "CCTV_RETENTION_MAINTENANCE_WINDOW_START_HOUR_UTC",
+        "CCTV_RETENTION_MAINTENANCE_WINDOW_DURATION_MINUTES",
+        "CCTV_RETENTION_VACUUM_ENABLED",
+        "CCTV_RETENTION_VACUUM_FREELIST_RATIO_THRESHOLD",
+        "CCTV_RETENTION_VACUUM_MIN_FREELIST_PAGES",
+        "CCTV_RETENTION_VACUUM_FREE_SPACE_MULTIPLIER",
+        "CCTV_RETENTION_VACUUM_BACKUP_DIR",
         "CCTV_HIPERWALL_DRY_RUN_ENABLED",
         "CCTV_LOCAL_VIDEO_PATH",
     ):
@@ -265,6 +320,24 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.tracker_max_idle_seconds == 12
     assert settings.persist_detections is True
     assert settings.frame_persistence_mode is FramePersistenceMode.ALL
+    assert settings.retention_enabled is False
+    assert settings.retention_dry_run is True
+    assert settings.retention_frame_days == 7
+    assert settings.retention_audit_days == 90
+    assert settings.retention_snapshot_days == 30
+    assert settings.retention_interval_seconds == 86_400
+    assert settings.retention_batch_size == 500
+    assert settings.retention_max_batches_per_run == 20
+    assert settings.retention_lease_seconds == 300
+    assert settings.retention_checkpoint_enabled is True
+    assert settings.retention_truncate_checkpoint_enabled is False
+    assert settings.retention_maintenance_window_start_hour_utc == 18
+    assert settings.retention_maintenance_window_duration_minutes == 60
+    assert settings.retention_vacuum_enabled is False
+    assert settings.retention_vacuum_freelist_ratio_threshold == 0.25
+    assert settings.retention_vacuum_min_freelist_pages == 10_000
+    assert settings.retention_vacuum_free_space_multiplier == 3
+    assert settings.retention_vacuum_backup_dir == Path("runtime/backups/pre-vacuum")
     assert settings.hiperwall_dry_run_enabled is True
     assert settings.local_video_path is None
     assert settings.external_actions_enabled is False
@@ -294,6 +367,23 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         ("tracker_max_missed_frames", -1),
         ("tracker_max_idle_seconds", 0),
         ("frame_persistence_mode", "sampled"),
+        ("retention_frame_days", 0),
+        ("retention_audit_days", 0),
+        ("retention_snapshot_days", 0),
+        ("retention_interval_seconds", 59),
+        ("retention_batch_size", 0),
+        ("retention_batch_size", 1_001),
+        ("retention_max_batches_per_run", 0),
+        ("retention_lease_seconds", 29),
+        ("retention_maintenance_window_start_hour_utc", -1),
+        ("retention_maintenance_window_start_hour_utc", 24),
+        ("retention_maintenance_window_duration_minutes", 0),
+        ("retention_maintenance_window_duration_minutes", 1_441),
+        ("retention_vacuum_freelist_ratio_threshold", 0.04),
+        ("retention_vacuum_freelist_ratio_threshold", 0.96),
+        ("retention_vacuum_min_freelist_pages", 0),
+        ("retention_vacuum_free_space_multiplier", 1.9),
+        ("retention_vacuum_free_space_multiplier", 10.1),
         ("snapshot_jpeg_quality", 0),
         ("snapshot_jpeg_quality", 101),
         ("face_detection_score_threshold", 0),
@@ -308,6 +398,30 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
 def test_settings_reject_invalid_execution_values(field: str, value: object) -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, **{field: value})
+
+
+def test_settings_reject_audit_retention_shorter_than_frame_retention() -> None:
+    with pytest.raises(ValueError, match="RETENTION_AUDIT_DAYS"):
+        Settings(
+            _env_file=None,
+            retention_frame_days=30,
+            retention_audit_days=7,
+        )
+
+
+@pytest.mark.parametrize(
+    "dependent_setting",
+    ["retention_truncate_checkpoint_enabled", "retention_vacuum_enabled"],
+)
+def test_settings_require_checkpoint_for_destructive_maintenance(
+    dependent_setting: str,
+) -> None:
+    with pytest.raises(ValueError, match="RETENTION_CHECKPOINT_ENABLED"):
+        Settings(
+            _env_file=None,
+            retention_checkpoint_enabled=False,
+            **{dependent_setting: True},
+        )
 
 
 @pytest.mark.parametrize(

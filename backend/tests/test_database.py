@@ -22,7 +22,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 19
+    assert first.schema_version == 20
     assert first.applied_migrations == (
         1,
         2,
@@ -43,8 +43,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
         17,
         18,
         19,
+        20,
     )
-    assert second.schema_version == 19
+    assert second.schema_version == 20
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -66,7 +67,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
                         'tracks', 'track_observations', 'rules', 'rule_events',
                         'display_actions', 'identities', 'identity_embeddings',
                         'face_match_events', 'person_instances', 'track_identity_links',
-                        'analysis_worker_leases', 'hiperwall_display_states'
+                        'analysis_worker_leases', 'hiperwall_display_states',
+                        'maintenance_leases'
                     )
                 """
             )
@@ -92,6 +94,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 17, "name": "rule_soft_delete"},
             {"version": 18, "name": "analysis_worker_leases"},
             {"version": 19, "name": "hiperwall_display_states"},
+            {"version": 20, "name": "maintenance_leases"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -110,6 +113,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             "track_identity_links",
             "analysis_worker_leases",
             "hiperwall_display_states",
+            "maintenance_leases",
         }
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -190,8 +194,8 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
 
     state = initialize_database(database_path)
 
-    assert state.schema_version == 19
-    assert state.applied_migrations == (15, 16, 17, 18, 19)
+    assert state.schema_version == 20
+    assert state.applied_migrations == (15, 16, 17, 18, 19, 20)
     with closing(connect_database(database_path)) as connection:
         camera = connection.execute(
             """
@@ -209,7 +213,7 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
                     AND name IN (
                         'identities', 'identity_embeddings', 'face_match_events',
                         'person_instances', 'track_identity_links', 'analysis_worker_leases',
-                        'hiperwall_display_states'
+                        'hiperwall_display_states', 'maintenance_leases'
                     )
                 """
             )
@@ -237,6 +241,7 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
         "track_identity_links",
         "analysis_worker_leases",
         "hiperwall_display_states",
+        "maintenance_leases",
     }
     assert foreign_key_errors == []
     assert dict(legacy_face_event) == {
@@ -252,7 +257,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 19
+    assert health.schema_version == 20
     assert health.journal_mode == "wal"
 
 
@@ -268,7 +273,7 @@ def test_display_state_migration_collapses_legacy_open_retries(tmp_path: Path) -
             )
             """
         )
-        for migration in MIGRATIONS[:-1]:
+        for migration in MIGRATIONS[:-2]:
             migration.apply(connection)
             connection.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
@@ -355,7 +360,7 @@ def test_display_state_migration_collapses_legacy_open_retries(tmp_path: Path) -
 
     state = initialize_database(database_path)
 
-    assert state.applied_migrations == (19,)
+    assert state.applied_migrations == (19, 20)
     with closing(connect_database(database_path)) as connection:
         actions = connection.execute(
             """

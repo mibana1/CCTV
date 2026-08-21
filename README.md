@@ -14,6 +14,7 @@ GPU 및 다채널 검증은 별도의 동작 테스트 PC에서 진행합니다.
 - `samples`: Git에 추가 가능한 작은 테스트 자료
 - `runtime`: DB, 로그, 스냅샷, 임시 영상. Git에서 제외
 - `docs/OPEN_QUESTIONS.md`: 미정 사항의 단일 관리 문서
+- `docs/architecture/POSTGRESQL_MIGRATION_REVIEW.md`: DB 전환 측정 기준과 목표 구조
 - `docs/decisions`: 확정된 아키텍처 결정 기록
 
 ## 핵심 경계

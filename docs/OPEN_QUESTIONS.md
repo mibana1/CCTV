@@ -31,7 +31,7 @@ Status values:
 | OQ-009 | Where will original video be recorded? | NVR/RAID architecture, usable capacity, reserve, and failure policy | Unassigned | OPEN | - |
 | OQ-010 | What alert latency and detection accuracy are acceptable? | Measurable target and acceptance dataset | Unassigned | OPEN | - |
 | OQ-011 | How many streams must Hiperwall display simultaneously? | Licensed and measured source/display limits | Unassigned | OPEN | - |
-| OQ-012 | Is PostgreSQL required for multi-worker operation? | SQLite WAL concurrency benchmark and target write rate | Unassigned | OPEN | - |
+| OQ-012 | Is PostgreSQL required for multi-worker operation? | Run the [documented SQLite WAL benchmark and transition criteria](architecture/POSTGRESQL_MIGRATION_REVIEW.md) against target worker/API/GPU load | Unassigned | OPEN | - |
 
 ## Deferred scope decisions
 

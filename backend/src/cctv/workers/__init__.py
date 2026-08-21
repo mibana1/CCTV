@@ -20,6 +20,13 @@ from cctv.workers.local_video import (
     WorkerStatus,
     WorkerStopReason,
 )
+from cctv.workers.retention import (
+    RetentionRunResult,
+    RetentionRunStatus,
+    RetentionWorker,
+    VacuumRunResult,
+    VacuumRunStatus,
+)
 from cctv.workers.rtsp import RtspStopReason, RtspWorker, RtspWorkerResult
 
 __all__ = [
@@ -30,10 +37,15 @@ __all__ = [
     "FrameConsumer",
     "LocalVideoWorker",
     "LocalVideoWorkerResult",
+    "RetentionRunResult",
+    "RetentionRunStatus",
+    "RetentionWorker",
     "RtspStopReason",
     "RtspWorker",
     "RtspWorkerResult",
     "SequentialFrameConsumer",
+    "VacuumRunResult",
+    "VacuumRunStatus",
     "WorkerStatus",
     "WorkerStopReason",
     "camera_rtsp_url",
