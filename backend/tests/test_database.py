@@ -21,7 +21,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 16
+    assert first.schema_version == 17
     assert first.applied_migrations == (
         1,
         2,
@@ -39,8 +39,9 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
         14,
         15,
         16,
+        17,
     )
-    assert second.schema_version == 16
+    assert second.schema_version == 17
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -84,6 +85,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 14, "name": "hiperwall_live_actions"},
             {"version": 15, "name": "camera_always_connected"},
             {"version": 16, "name": "candidate_free_face_events"},
+            {"version": 17, "name": "rule_soft_delete"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -133,7 +135,7 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
             )
             """
         )
-        for migration in MIGRATIONS[:-2]:
+        for migration in MIGRATIONS[:-3]:
             migration.apply(connection)
             connection.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
@@ -180,8 +182,8 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
 
     state = initialize_database(database_path)
 
-    assert state.schema_version == 16
-    assert state.applied_migrations == (15, 16)
+    assert state.schema_version == 17
+    assert state.applied_migrations == (15, 16, 17)
     with closing(connect_database(database_path)) as connection:
         camera = connection.execute(
             """
@@ -239,7 +241,7 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 16
+    assert health.schema_version == 17
     assert health.journal_mode == "wal"
 
 

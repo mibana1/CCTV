@@ -191,7 +191,7 @@ def test_engine_rejects_unsupported_rule_type() -> None:
         raise AssertionError("unsupported rule type was accepted")
 
 
-def test_visual_color_emits_after_three_of_five_votes_and_ends_when_lost() -> None:
+def test_visual_color_emits_point_event_after_three_of_five_and_rearms_when_lost() -> None:
     engine = RuleEngine(
         [
             rule(
@@ -225,20 +225,59 @@ def test_visual_color_emits_after_three_of_five_votes_and_ends_when_lost() -> No
     assert process(0, "red") == ()
     assert process(1, "blue") == ()
     assert process(2, "red") == ()
-    started = process(3, "red")
+    occurred = process(3, "red")
     assert process(4, "blue") == ()
-    ended = process(5, "blue")
+    assert process(5, "blue") == ()
+    assert process(6, "red") == ()
+    assert process(7, "red") == ()
+    reoccurred = process(8, "red")
 
-    assert [event.event_type for event in started] == ["upper_body_color_started"]
-    assert started[0].event_state == "started"
-    assert started[0].confidence == 0.8
-    assert started[0].payload["target_color"] == "red"
-    assert started[0].payload["matching_votes"] == 3
-    assert started[0].payload["minimum_matches"] == 3
-    assert started[0].payload["crop_box"] == [40, 30, 60, 55]
-    assert [event.event_type for event in ended] == ["upper_body_color_ended"]
-    assert ended[0].event_state == "ended"
-    assert ended[0].payload["reason"] == "vote_threshold_lost"
+    assert [event.event_type for event in occurred] == ["upper_body_color_detected"]
+    assert occurred[0].event_state == "occurred"
+    assert occurred[0].confidence == 0.8
+    assert occurred[0].payload["target_color"] == "red"
+    assert occurred[0].payload["matching_votes"] == 3
+    assert occurred[0].payload["minimum_matches"] == 3
+    assert occurred[0].payload["crop_box"] == [40, 30, 60, 55]
+    assert [event.event_type for event in reoccurred] == ["upper_body_color_detected"]
+
+
+def test_visual_color_does_not_repeat_until_condition_resets_and_cooldown_expires() -> None:
+    engine = RuleEngine(
+        [
+            rule(
+                "visual_color",
+                {},
+                parameters={
+                    "target_color": "red",
+                    "window_size": 1,
+                    "minimum_matches": 1,
+                    "cooldown_seconds": 2,
+                },
+            )
+        ]
+    )
+    detection = tracked_detection(1, foot_x=50, foot_y=70)
+
+    def process(sample_index: int, timestamp: float, color: str):
+        return engine.process(
+            frame(sample_index, timestamp, detection),
+            attributes_by_track={
+                1: {
+                    "upper_body_color": color,
+                    "upper_body_color_confidence": 0.9,
+                }
+            },
+        )
+
+    assert len(process(0, 0, "red")) == 1
+    assert process(1, 0.5, "red") == ()
+    assert process(2, 1, "blue") == ()
+    assert process(3, 1.5, "red") == ()
+    reoccurred = process(4, 2, "red")
+
+    assert len(reoccurred) == 1
+    assert reoccurred[0].event_state == "occurred"
 
 
 def test_visual_color_ignores_low_confidence_and_accepts_korean_color_alias() -> None:
@@ -282,4 +321,6 @@ def test_visual_color_ignores_low_confidence_and_accepts_korean_color_alias() ->
     )
 
     assert len(events) == 1
+    assert events[0].event_type == "upper_body_color_detected"
+    assert events[0].event_state == "occurred"
     assert events[0].payload["target_color"] == "red"

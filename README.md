@@ -157,6 +157,13 @@ HIPERWALL_TOKEN=replace-with-hiperinterface-token
 LIVE 작업 상태는 같은 API에서 `pending`, `processing`, `retry`, `succeeded`,
 `failed`로 조회할 수 있습니다.
 
+LIVE `open_source` 직전에는 최신 Hiperwall 목록으로 저장된 콘텐츠와 Zone을 다시
+확인합니다. 삭제되거나 더 이상 조회되지 않는 대상은 실제 open 명령을 보내지 않고
+각각 `hiperwall_content_not_found`, `hiperwall_zone_not_found`로 실패 처리합니다.
+목록 조회 인증 실패는 `hiperwall_auth_failed`, 유효한 목록 조회 후 명령 권한이
+거부되면 `hiperwall_command_forbidden`으로 기록합니다. 실패 로그에는 안전한 오류
+메시지와 재시도 여부가 함께 남습니다.
+
 ```bash
 curl "http://127.0.0.1:18000/hiperwall-actions?status=succeeded"
 curl "http://127.0.0.1:18000/hiperwall-actions?status=failed"
@@ -219,9 +226,22 @@ Git에서 제외된 `runtime/secrets/camera_credentials.key`에 생성되므로 
 `http://127.0.0.1:18000/test-color-events`에서는 카메라와 상의 색상, 최근
 프레임의 일치 기준을 정하고 Hiperwall에서 직접 불러온 콘텐츠와 Zone을 선택해
 색상 이벤트를 등록할 수 있습니다. 콘텐츠는 가능하면 UUID로 저장하고, Zone을
-고르면 조회된 좌표·크기로 Zone 전체 배치를 자동 설정합니다. 기본값은 최근 5회
+고르면 조회된 좌표·크기로 Zone 전체 배치를 자동 설정합니다. 표시 위치와 크기는
+절대 픽셀 좌표 또는 Zone 내부 비율로 직접 수정할 수 있습니다. 기본값은 최근 5회
 중 3회 일치이며 규칙은 다음 테스트 시작부터 적용됩니다. 색상 판정은 Ollama 없이
-OpenCV HSV 분석으로 수행합니다.
+OpenCV HSV 분석으로 수행합니다. 조건이 처음 충족되면 단발 `occurred` 이벤트를
+생성하며, LIVE 모드에서는 설정한 `display_seconds` 동안 표시한 뒤 같은 Hiperwall
+인스턴스를 자동으로 닫습니다. 같은 트랙은 조건이 해제되고 쿨다운이 지난 뒤에만
+다시 이벤트를 발생시킵니다. 등록된 이벤트는 화면에서 중지·활성화, 수정, 삭제할
+수 있습니다. `Hiperwall 테스트`는 영상을 분석하지 않고 같은 매핑으로 수동
+`occurred` 이벤트를 생성합니다. DRY RUN에서는 전송 기록만 남고 LIVE에서는 실제
+전송 큐를 거쳐 설정 시간 뒤 자동 종료됩니다. 삭제는 과거 이벤트와 전송 기록을
+보존하는 소프트 삭제입니다.
+
+테스트 대시보드·사람 등록·색상 이벤트 화면은 `development|local|test` 환경에서
+`CCTV_TEST_DASHBOARD_ENABLED=true`이고 localhost로 접속할 때 DRY RUN과 LIVE
+모두 사용할 수 있습니다. LIVE에서는 세 화면 상단에 실제 Hiperwall 전송 경고가
+작은 `LIVE` 배지로 표시됩니다.
 
 ```text
 POST /test-sessions
@@ -300,7 +320,9 @@ GET /tracks?analysis_run_id=<run-id>&class_name=person
 
 - 지원 규칙: `GET /rule-types`
 - 규칙 생성·목록: `POST /rules`, `GET /rules?source_name=camera-1`
+- 규칙 수정·삭제: `PUT /rules/<rule-id>`, `DELETE /rules/<rule-id>`
 - 활성화 변경: `PATCH /rules/<rule-id>/enabled`
+- Hiperwall 수동 테스트: `POST /rules/<rule-id>/test-event`
 - 이벤트 조회: `GET /rule-events?analysis_run_id=<run-id>&event_type=intrusion_started`
 - 상의 색상: `rule_type=visual_color`, `parameters.target_color=red|orange|yellow|green|blue|purple|pink|black|white|gray`
 

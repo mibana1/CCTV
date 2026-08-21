@@ -31,13 +31,13 @@ def test_health_initializes_database(tmp_path: Path) -> None:
         "checks": {
             "database": {
                 "status": "ok",
-                "schema_version": 16,
+                "schema_version": 17,
                 "journal_mode": "wal",
             }
         },
     }
     assert database_path.is_file()
-    assert client.app.state.database.schema_version == 16
+    assert client.app.state.database.schema_version == 17
 
     log_records = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()]
     events = {record["event"] for record in log_records}

@@ -214,6 +214,8 @@ class HiperwallActionWorker:
                 "event": "hiperwall_action_failed",
                 "action_id": action_id,
                 "error_code": error.code,
+                "error_message": str(error),
+                "error_retryable": error.retryable,
                 "attempt_count": attempt_count,
                 "action_status": status,
             },
@@ -273,9 +275,9 @@ def _request(
 def _instance_id(event: RuleEvent, source_name: str) -> str:
     lifecycle_key = event.id if event.event_state == "occurred" else str(event.track_id)
     source = re.sub(r"[^A-Za-z0-9_.-]", "-", source_name).strip("-")[:36] or "source"
-    digest = hashlib.sha256(
-        f"{source_name}|{event.rule_id}|{lifecycle_key}".encode()
-    ).hexdigest()[:20]
+    digest = hashlib.sha256(f"{source_name}|{event.rule_id}|{lifecycle_key}".encode()).hexdigest()[
+        :20
+    ]
     return f"cctv-{source}-{digest}"
 
 

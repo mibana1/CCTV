@@ -261,14 +261,32 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
     assert 'id="color-rule-form"' in color_event_page.text
     assert 'rule_type: "visual_color"' in color_event_page.text
     assert 'target_color: document.getElementById("target-color").value' in color_event_page.text
-    assert 'api("/rules"' in color_event_page.text
+    assert 'editingRuleId ? `/rules/${encodeURIComponent(editingRuleId)}` : "/rules"' in color_event_page.text
     assert "Hiperwall 연결 · 선택" in color_event_page.text
     assert 'id="hiperwall-reload"' in color_event_page.text
     assert 'api("/hiperwall/inventory")' in color_event_page.text
     assert 'id="hiperwall-content"' in color_event_page.text
     assert 'id="hiperwall-zone"' in color_event_page.text
-    assert 'content_uuid: content.uuid' in color_event_page.text
-    assert 'layout: { mode: "pixels"' in color_event_page.text
+    assert 'content_uuid: content?.uuid || contentValue' in color_event_page.text
+    assert 'id="hiperwall-layout-mode"' in color_event_page.text
+    assert 'id="hiperwall-x"' in color_event_page.text
+    assert 'id="hiperwall-y"' in color_event_page.text
+    assert 'id="hiperwall-width"' in color_event_page.text
+    assert 'id="hiperwall-height"' in color_event_page.text
+    assert "function applyZoneLayoutDefaults()" in color_event_page.text
+    assert "return { mode, x, y, width, height };" in color_event_page.text
+    assert 'test.textContent = "Hiperwall 테스트"' in color_event_page.text
+    assert '/test-event`' in color_event_page.text
+    assert 'edit.textContent = "수정"' in color_event_page.text
+    assert 'remove.textContent = "삭제"' in color_event_page.text
+    assert 'method: "DELETE"' in color_event_page.text
+    assert 'id="rule-cancel"' in color_event_page.text
+    assert 'id="live-mode" class="runtime-mode"' in page.text
+    assert 'id="live-mode" class="runtime-mode"' in identity_page.text
+    assert 'id="live-mode" class="runtime-mode"' in color_event_page.text
+    assert 'health.mode === "live"' in page.text
+    assert 'health.mode !== "live"' in identity_page.text
+    assert 'health.mode !== "live"' in color_event_page.text
     assert "카메라 등록" in page.text
     assert "카메라 선택" in page.text
     assert 'role="tablist" aria-label="카메라 관리"' in page.text
@@ -733,7 +751,9 @@ def test_dashboard_is_denied_when_feature_is_disabled(tmp_path: Path) -> None:
     assert color_event_response.status_code == 403
 
 
-def test_dashboard_rejects_non_local_host_and_live_mode(tmp_path: Path) -> None:
+def test_dashboard_rejects_non_local_host_and_allows_local_live_mode(
+    tmp_path: Path,
+) -> None:
     snapshot = tmp_path / "sample.jpg"
     snapshot.write_bytes(b"jpg")
     manager = FakeSessionManager(snapshot)
@@ -758,6 +778,19 @@ def test_dashboard_rejects_non_local_host_and_live_mode(tmp_path: Path) -> None:
         )
     with TestClient(create_app(live_settings, test_session_manager=manager)) as live_client:
         live_response = live_client.get("/test-dashboard")
+        live_identity_response = live_client.get("/test-identities")
+        live_color_response = live_client.get("/test-color-events")
 
     assert remote_response.status_code == 403
-    assert live_response.status_code == 403
+    assert live_response.status_code == 200
+    assert live_identity_response.status_code == 200
+    assert live_color_response.status_code == 200
+    assert '<span id="live-mode" class="runtime-mode" hidden>LIVE</span>' in live_response.text
+    assert (
+        '<span id="live-mode" class="runtime-mode" hidden>LIVE</span>'
+        in live_identity_response.text
+    )
+    assert (
+        '<span id="live-mode" class="runtime-mode" hidden>LIVE</span>'
+        in live_color_response.text
+    )

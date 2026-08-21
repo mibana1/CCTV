@@ -20,6 +20,7 @@ from cctv.db.migrations.v0013_person_instances import apply as apply_v0013
 from cctv.db.migrations.v0014_hiperwall_live_actions import apply as apply_v0014
 from cctv.db.migrations.v0015_camera_always_connected import apply as apply_v0015
 from cctv.db.migrations.v0016_candidate_free_face_events import apply as apply_v0016
+from cctv.db.migrations.v0017_rule_soft_delete import apply as apply_v0017
 
 
 @dataclass(frozen=True)
@@ -48,6 +49,7 @@ MIGRATIONS = (
     Migration(version=14, name="hiperwall_live_actions", apply=apply_v0014),
     Migration(version=15, name="camera_always_connected", apply=apply_v0015),
     Migration(version=16, name="candidate_free_face_events", apply=apply_v0016),
+    Migration(version=17, name="rule_soft_delete", apply=apply_v0017),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version

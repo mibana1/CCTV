@@ -1,4 +1,4 @@
-"""Local dry-run RTSP test control, event, and dashboard endpoints."""
+"""Local RTSP test control, event, and dashboard endpoints."""
 
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingRes
 from pydantic import BaseModel, Field, SecretStr
 
 from cctv.cameras import CameraCredentialError, CameraManager, CameraProvisioningError
-from cctv.core.settings import AppMode
 from cctv.dashboard import (
     SessionConflictError,
     SessionNotFoundError,
@@ -258,19 +257,21 @@ class TestIdentityRegistrationResponse(BaseModel):
 
 
 def require_test_dashboard_access(request: Request) -> None:
-    """Limit process-control and biometric test views to local dry-run development."""
+    """Limit process-control and biometric test views to local development."""
     settings = request.app.state.settings
     local_environment = settings.app_env.strip().casefold() in {"development", "local", "test"}
     local_host = request.url.hostname in {"127.0.0.1", "localhost", "::1", "testserver"}
     if (
         not settings.test_dashboard_enabled
-        or settings.app_mode is not AppMode.DRY_RUN
         or not local_environment
         or not local_host
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="test dashboard is available only from localhost in dry-run development mode",
+            detail=(
+                "test dashboard is available only from localhost in development mode "
+                "when CCTV_TEST_DASHBOARD_ENABLED=true"
+            ),
         )
 
 

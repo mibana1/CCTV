@@ -22,6 +22,46 @@ from cctv.hiperwall import (
 from cctv.inference import BoundingBox, Detection, FrameDetections
 from cctv.rules import RuleDefinition, RuleEvent
 
+CONTENT_XML = """\
+<Objects>
+  <Object type="Streamer">
+    <name>Entrance &amp; Lobby</name>
+    <type>Streamer</type>
+    <uuid>source-123</uuid>
+  </Object>
+</Objects>
+"""
+
+ZONES_XML = """\
+<Zones>
+  <Zone>
+    <name>Alert Zone</name>
+    <id>Alert Zone</id>
+  </Zone>
+</Zones>
+"""
+
+
+def _inventory_handler(
+    requests: list[httpx.Request],
+    *,
+    content_xml: str = CONTENT_XML,
+    zones_xml: str = ZONES_XML,
+    command_status: int = 200,
+):
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/hello":
+            return httpx.Response(200, text="Hiperwall,2025R1,Token,Default")
+        body = request.content.decode("utf-8")
+        if '<action type="list"' in body:
+            return httpx.Response(200, text=content_xml)
+        if '<action type="walls"' in body:
+            return httpx.Response(200, text=zones_xml)
+        return httpx.Response(command_status, text="<Response />")
+
+    return handler
+
 
 def _settings(database_path: Path, **overrides: object) -> Settings:
     return Settings(
@@ -81,9 +121,7 @@ def _frame() -> FrameDetections:
         frame_width=640,
         frame_height=360,
         inference_seconds=0.01,
-        detections=(
-            Detection(0, "person", 0.93, BoundingBox(100, 50, 220, 300), track_id=7),
-        ),
+        detections=(Detection(0, "person", 0.93, BoundingBox(100, 50, 220, 300), track_id=7),),
     )
 
 
@@ -138,12 +176,7 @@ def test_mapping_requires_one_content_and_bounded_percent_layout() -> None:
 
 def test_client_sends_token_authenticated_open_and_close_xml() -> None:
     requests: list[httpx.Request] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        return httpx.Response(200, text="<Response />")
-
-    http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    http_client = httpx.Client(transport=httpx.MockTransport(_inventory_handler(requests)))
     client = HiperwallClient(
         base_url="http://hiperwall-host:8000",
         auth_mode="token",
@@ -164,14 +197,23 @@ def test_client_sends_token_authenticated_open_and_close_xml() -> None:
     }
 
     opened = client.execute(open_request)
-    closed = client.execute(
-        {"operation": "restore_layout", "instance_id": "cctv-camera-1-abc"}
-    )
+    closed = client.execute({"operation": "restore_layout", "instance_id": "cctv-camera-1-abc"})
 
-    open_xml = requests[0].content.decode("utf-8")
-    close_xml = requests[1].content.decode("utf-8")
-    assert requests[0].url == "http://hiperwall-host:8000/xmlcommand"
-    assert requests[0].headers["content-type"] == "application/xml; charset=utf-8"
+    xml_requests = [request for request in requests if request.method == "POST"]
+    open_request_sent = next(
+        request
+        for request in xml_requests
+        if '<command type="open"' in request.content.decode("utf-8")
+    )
+    close_request_sent = next(
+        request
+        for request in xml_requests
+        if '<command type="close"' in request.content.decode("utf-8")
+    )
+    open_xml = open_request_sent.content.decode("utf-8")
+    close_xml = close_request_sent.content.decode("utf-8")
+    assert open_request_sent.url == "http://hiperwall-host:8000/xmlcommand"
+    assert open_request_sent.headers["content-type"] == "application/xml; charset=utf-8"
     assert '<auth type="token">' in open_xml
     assert "<user>cctv_bridge</user>" in open_xml
     assert "<token>secret-token</token>" in open_xml
@@ -181,12 +223,125 @@ def test_client_sends_token_authenticated_open_and_close_xml() -> None:
     assert '<command type="close">' in close_xml
     assert opened["external_request_sent"] is True
     assert closed["operation"] == "restore_layout"
+    assert len(requests) == 5
+
+
+def test_client_rejects_removed_content_before_open_command() -> None:
+    requests: list[httpx.Request] = []
+    client = HiperwallClient(
+        base_url="http://hiperwall-host:8000",
+        http_client=httpx.Client(transport=httpx.MockTransport(_inventory_handler(requests))),
+    )
+
+    with pytest.raises(HiperwallRequestError) as captured:
+        client.execute(
+            {
+                "operation": "open_source",
+                "instance_id": "cctv-camera-1-missing-content",
+                "target": {"selector": "uuid", "value": "removed-source"},
+            }
+        )
+
+    assert captured.value.code == "hiperwall_content_not_found"
+    assert captured.value.retryable is False
+    assert not any(
+        '<command type="open"' in request.content.decode("utf-8")
+        for request in requests
+        if request.method == "POST"
+    )
+
+
+def test_client_rejects_removed_zone_before_open_command() -> None:
+    requests: list[httpx.Request] = []
+    client = HiperwallClient(
+        base_url="http://hiperwall-host:8000",
+        http_client=httpx.Client(transport=httpx.MockTransport(_inventory_handler(requests))),
+    )
+
+    with pytest.raises(HiperwallRequestError) as captured:
+        client.execute(
+            {
+                "operation": "open_source",
+                "instance_id": "cctv-camera-1-missing-zone",
+                "target": {
+                    "selector": "name",
+                    "value": "Entrance & Lobby",
+                    "zone_id": "Removed Zone",
+                },
+            }
+        )
+
+    assert captured.value.code == "hiperwall_zone_not_found"
+    assert captured.value.retryable is False
+    assert not any(
+        '<command type="open"' in request.content.decode("utf-8")
+        for request in requests
+        if request.method == "POST"
+    )
+
+
+def test_client_distinguishes_inventory_authentication_failure() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/hello":
+            return httpx.Response(200, text="Hiperwall,2025R1,Token,Default")
+        return httpx.Response(403, text="Forbidden")
+
+    client = HiperwallClient(
+        base_url="http://hiperwall-host:8000",
+        auth_mode="token",
+        user="cctv_bridge",
+        token="wrong-token",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(HiperwallRequestError) as captured:
+        client.execute(
+            {
+                "operation": "open_source",
+                "instance_id": "cctv-camera-1-auth",
+                "target": {"selector": "name", "value": "Entrance & Lobby"},
+            }
+        )
+
+    assert captured.value.code == "hiperwall_auth_failed"
+    assert captured.value.retryable is False
+
+
+def test_client_distinguishes_forbidden_command_after_valid_preflight() -> None:
+    requests: list[httpx.Request] = []
+    client = HiperwallClient(
+        base_url="http://hiperwall-host:8000",
+        http_client=httpx.Client(
+            transport=httpx.MockTransport(_inventory_handler(requests, command_status=403))
+        ),
+    )
+
+    with pytest.raises(HiperwallRequestError) as captured:
+        client.execute(
+            {
+                "operation": "open_source",
+                "instance_id": "cctv-camera-1-forbidden",
+                "target": {
+                    "selector": "name",
+                    "value": "Entrance & Lobby",
+                    "zone_id": "Alert Zone",
+                },
+            }
+        )
+
+    assert captured.value.code == "hiperwall_command_forbidden"
+    assert captured.value.retryable is False
 
 
 def test_client_rejects_http_200_business_error() -> None:
     http_client = httpx.Client(
         transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, text="<Response><Error>bad target</Error></Response>")
+            lambda request: httpx.Response(
+                200, text="<Response><Error>bad target</Error></Response>"
+            )
         )
     )
     client = HiperwallClient(
@@ -244,13 +399,9 @@ def test_durable_worker_executes_persisted_live_action(tmp_path: Path) -> None:
 
     sent: list[httpx.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        sent.append(request)
-        return httpx.Response(200, text="<Response />")
-
     client = HiperwallClient(
         base_url=settings.hiperwall_base_url or "",
-        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+        http_client=httpx.Client(transport=httpx.MockTransport(_inventory_handler(sent))),
     )
     worker = HiperwallActionWorker(settings, client=client)
 
@@ -264,7 +415,15 @@ def test_durable_worker_executes_persisted_live_action(tmp_path: Path) -> None:
     assert record.last_attempt_at is not None
     assert record.completed_at is not None
     assert record.result["external_request_sent"] is True
-    assert len(sent) == 1
+    assert len(sent) == 4
+    assert (
+        sum(
+            '<command type="open"' in request.content.decode("utf-8")
+            for request in sent
+            if request.method == "POST"
+        )
+        == 1
+    )
     assert record.updated_at <= datetime.now(UTC)
     scheduled = DisplayActionRepository(database_path).list(
         rule_event_id=event.id,

@@ -74,6 +74,8 @@ class HiperwallDryRunPlanner:
             if mapping is not None:
                 request["target"] = mapping.target_request()
                 request["display_seconds"] = mapping.display_seconds
+                if event.event_state == "occurred":
+                    request["close_after_seconds"] = mapping.display_seconds
             if rule is not None:
                 request["label"] = f"{rule.name} | {source_name} | {event.event_type}"
             result = {

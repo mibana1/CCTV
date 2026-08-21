@@ -40,12 +40,15 @@
       .eyebrow { color: var(--warning); margin: 0 0 8px; font-size: .78rem; font-weight: 800; letter-spacing: .12em; }
       .header-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
       .nav-link { border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; color: var(--text); background: var(--surface-2); font-size: .82rem; font-weight: 800; text-decoration: none; }
+      .runtime-mode { display: inline-flex; align-items: center; border: 1px solid rgba(255, 107, 114, .55); border-radius: 999px; padding: 4px 8px; color: #ffadb1; background: rgba(255, 107, 114, .12); font-size: .68rem; font-weight: 900; letter-spacing: .08em; }
+      .runtime-mode[hidden] { display: none; }
       .grid { display: grid; grid-template-columns: minmax(360px, .85fr) minmax(0, 1.15fr); gap: 20px; margin-top: 26px; align-items: start; }
       .stack { display: grid; gap: 20px; }
       .panel { background: rgba(18, 27, 37, .94); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: 0 18px 55px rgba(0, 0, 0, .18); }
       .panel-heading { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 16px; }
       .panel-heading small, .hint { color: var(--muted); font-size: .76rem; line-height: 1.55; }
       .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .form-grid .full { grid-column: 1 / -1; }
       label { display: grid; gap: 7px; color: var(--muted); font-size: .82rem; }
       input, select { width: 100%; min-width: 0; background: #0c141d; border: 1px solid var(--line); border-radius: 9px; color: var(--text); padding: 10px 12px; }
       fieldset { margin: 16px 0 0; padding: 14px; border: 1px solid var(--line); border-radius: 11px; }
@@ -55,9 +58,14 @@
       .inventory-status.success { color: var(--accent); }
       .inventory-status.error { color: #ff8f8f; }
       .zone-detail { min-height: 1.25rem; margin: 10px 0 0; color: var(--accent-2); font-size: .76rem; line-height: 1.5; }
+      .layout-heading { margin: 16px 0 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+      .layout-heading strong, .layout-heading small { display: block; }
+      .layout-heading small { margin-top: 5px; color: var(--muted); font-size: .75rem; line-height: 1.5; }
       .primary, .secondary { border: 0; border-radius: 10px; padding: 11px 14px; font-weight: 800; }
       .primary { color: #04120e; background: var(--accent); }
       .secondary { color: var(--text); background: var(--surface-2); border: 1px solid var(--line); }
+      .danger { color: #ffd9db; background: rgba(255, 107, 114, .12); border: 1px solid rgba(255, 107, 114, .42); }
+      .form-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
       button:disabled { cursor: not-allowed; opacity: .42; }
       .message { min-height: 22px; margin: 14px 0 0; color: var(--muted); font-size: .86rem; }
       .message.success { color: var(--accent); }
@@ -67,10 +75,12 @@
       .rule-info { min-width: 0; }
       .rule-info strong, .rule-info small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .rule-info small { margin-top: 5px; color: var(--muted); }
-      .rule-actions { display: flex; align-items: center; gap: 8px; }
+      .rule-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
       .badge { display: inline-flex; border-radius: 999px; padding: 5px 8px; color: var(--accent); background: rgba(50, 214, 160, .12); font-size: .72rem; font-weight: 800; }
       .badge.disabled { color: var(--danger); background: rgba(255, 107, 114, .12); }
       .toggle { border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; color: var(--text); background: #0c141d; font-size: .75rem; }
+      .toggle.test { color: #b9ddff; border-color: rgba(73, 168, 255, .48); }
+      .toggle.danger { color: #ffb5b9; border-color: rgba(255, 107, 114, .48); background: rgba(255, 107, 114, .08); }
       .event-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }
       .event-item { padding: 10px 12px; border-left: 3px solid var(--accent-2); border-radius: 6px; background: var(--surface-2); }
       .event-item.ended { border-left-color: var(--muted); }
@@ -92,9 +102,10 @@
         <div>
           <p class="eyebrow">UPPER BODY · COLOR EVENT</p>
           <h1>색상 이벤트</h1>
-          <p>추적 중인 사람의 상의 색상을 최근 프레임에서 반복 확인한 뒤 이벤트와 Hiperwall 작업을 생성합니다.</p>
+          <p>추적 중인 사람의 상의 색상을 반복 확인한 뒤 이벤트를 한 번 발생시키고, 설정한 시간 동안 Hiperwall에 표시합니다.</p>
         </div>
         <div class="header-actions">
+          <span id="live-mode" class="runtime-mode" hidden>LIVE</span>
           <a class="nav-link" href="/test-identities">사람 등록</a>
           <a class="nav-link" href="/test-dashboard">← CCTV 테스트 대시보드</a>
         </div>
@@ -104,7 +115,7 @@
         <section class="panel">
           <div class="panel-heading">
             <div>
-              <h2>새 색상 이벤트</h2>
+              <h2 id="rule-form-title">새 색상 이벤트</h2>
               <small>기본값은 최근 5회 중 3회 일치할 때 이벤트를 시작합니다.</small>
             </div>
           </div>
@@ -147,9 +158,28 @@
                 <label>표시 시간(초)<input id="hiperwall-seconds" type="number" min="1" max="86400" value="30"></label>
               </div>
               <p id="hiperwall-zone-detail" class="zone-detail"></p>
+              <div class="layout-heading">
+                <strong>표시 위치 · 크기</strong>
+                <small>Zone을 선택하면 전체 Zone 크기로 자동 입력되며 원하는 값으로 수정할 수 있습니다.</small>
+              </div>
+              <div class="form-grid">
+                <label class="full">좌표 방식
+                  <select id="hiperwall-layout-mode" disabled>
+                    <option value="pixels">절대 좌표 (px)</option>
+                    <option value="percent">Zone 내부 비율 (%)</option>
+                  </select>
+                </label>
+                <label><span id="hiperwall-x-label">X 위치 (중심 px)</span><input id="hiperwall-x" type="number" step="any" disabled></label>
+                <label><span id="hiperwall-y-label">Y 위치 (중심 px)</span><input id="hiperwall-y" type="number" step="any" disabled></label>
+                <label>너비<input id="hiperwall-width" type="number" min="0.01" step="any" disabled></label>
+                <label>높이<input id="hiperwall-height" type="number" min="0.01" step="any" disabled></label>
+              </div>
               <p class="hint">HiperInterface에서 콘텐츠 이름·UUID와 Zone ID·좌표를 직접 조회합니다. 콘텐츠를 선택하지 않으면 LIVE 전송 대상에서 제외됩니다.</p>
             </fieldset>
-            <button id="rule-submit" class="primary" type="submit" style="margin-top: 16px">색상 이벤트 추가</button>
+            <div class="form-actions">
+              <button id="rule-submit" class="primary" type="submit">색상 이벤트 추가</button>
+              <button id="rule-cancel" class="secondary" type="button" hidden>수정 취소</button>
+            </div>
           </form>
           <p id="form-message" class="message" role="status" aria-live="polite"></p>
         </section>
@@ -164,7 +194,7 @@
           </section>
           <section class="panel">
             <div class="panel-heading">
-              <div><h2>최근 발생 이벤트</h2><small>시작·종료 판정과 색상 투표 결과를 표시합니다.</small></div>
+              <div><h2>최근 발생 이벤트</h2><small>단발 감지 시점과 색상 투표 결과를 표시합니다.</small></div>
             </div>
             <div id="event-list" class="event-list"><p class="empty">발생한 이벤트가 없습니다.</p></div>
           </section>
@@ -174,7 +204,7 @@
 
     <script>
       const colorLabels = { red: "빨강", orange: "주황", yellow: "노랑", green: "초록", blue: "파랑", purple: "보라", pink: "분홍", black: "검정", white: "흰색", gray: "회색" };
-      const state = { cameras: [], rules: [], inventory: { contents: [], zones: [], walls: [] } };
+      const state = { cameras: [], rules: [], inventory: { contents: [], zones: [], walls: [] }, editingRuleId: null };
 
       async function api(path, options = {}) {
         const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
@@ -191,6 +221,11 @@
         const target = document.getElementById("form-message");
         target.textContent = message;
         target.className = `message${kind ? ` ${kind}` : ""}`;
+      }
+
+      async function loadRuntimeMode() {
+        const health = await api("/health");
+        document.getElementById("live-mode").hidden = health.mode !== "live";
       }
 
       async function loadCameras() {
@@ -224,6 +259,7 @@
         zoneSelect.disabled = state.inventory.zones.length === 0;
         if ([...contentSelect.options].some(option => option.value === selectedContent)) contentSelect.value = selectedContent;
         if ([...zoneSelect.options].some(option => option.value === selectedZone)) zoneSelect.value = selectedZone;
+        setLayoutControlsEnabled(Boolean(zoneSelect.value));
         renderZoneDetail();
       }
 
@@ -239,6 +275,155 @@
           ? ` · 그리드 ${zone.grid_horizontal} × ${zone.grid_vertical}`
           : "";
         detail.textContent = `Zone ID ${zone.id}${geometry}${grid}`;
+      }
+
+      const layoutFieldIds = ["hiperwall-x", "hiperwall-y", "hiperwall-width", "hiperwall-height"];
+
+      function setLayoutControlsEnabled(enabled) {
+        document.getElementById("hiperwall-layout-mode").disabled = !enabled;
+        for (const id of layoutFieldIds) document.getElementById(id).disabled = !enabled;
+      }
+
+      function updateLayoutLabels() {
+        const pixels = document.getElementById("hiperwall-layout-mode").value === "pixels";
+        document.getElementById("hiperwall-x-label").textContent = pixels ? "X 위치 (중심 px)" : "X 위치 (Zone 내 %)";
+        document.getElementById("hiperwall-y-label").textContent = pixels ? "Y 위치 (중심 px)" : "Y 위치 (Zone 내 %)";
+      }
+
+      function setLayoutValues(layout = null) {
+        document.getElementById("hiperwall-x").value = layout?.x ?? "";
+        document.getElementById("hiperwall-y").value = layout?.y ?? "";
+        document.getElementById("hiperwall-width").value = layout?.width ?? "";
+        document.getElementById("hiperwall-height").value = layout?.height ?? "";
+      }
+
+      function applyZoneLayoutDefaults() {
+        const zoneId = document.getElementById("hiperwall-zone").value;
+        const mode = document.getElementById("hiperwall-layout-mode").value;
+        const zone = state.inventory.zones.find(item => item.id === zoneId);
+        setLayoutControlsEnabled(Boolean(zoneId));
+        updateLayoutLabels();
+        if (!zoneId) { setLayoutValues(); return; }
+        if (mode === "percent") {
+          setLayoutValues({ x: 0, y: 0, width: 100, height: 100 });
+          return;
+        }
+        if (zone && [zone.left, zone.top, zone.width, zone.height].every(Number.isFinite)) {
+          setLayoutValues({ x: zone.left + zone.width / 2, y: zone.top + zone.height / 2, width: zone.width, height: zone.height });
+        } else {
+          setLayoutValues();
+        }
+      }
+
+      function readHiperwallLayout(zoneId) {
+        if (!zoneId) return null;
+        const raw = layoutFieldIds.map(id => document.getElementById(id).value.trim());
+        if (raw.every(value => value === "")) return null;
+        if (raw.some(value => value === "")) throw new Error("표시 위치와 크기 네 값을 모두 입력해 주세요.");
+        const [x, y, width, height] = raw.map(Number);
+        if (![x, y, width, height].every(Number.isFinite)) throw new Error("표시 위치와 크기는 숫자로 입력해 주세요.");
+        if (width <= 0 || height <= 0) throw new Error("표시 너비와 높이는 0보다 커야 합니다.");
+        const mode = document.getElementById("hiperwall-layout-mode").value;
+        if (mode === "percent" && (x < 0 || y < 0 || x + width > 100 || y + height > 100)) {
+          throw new Error("비율 좌표는 선택한 Zone의 0~100% 범위 안에 있어야 합니다.");
+        }
+        return { mode, x, y, width, height };
+      }
+
+      function ensureSelectOption(select, value, label) {
+        if (value && ![...select.options].some(option => option.value === value)) select.append(new Option(label, value));
+        select.value = value || "";
+      }
+
+      function mappingContentKey(mapping) {
+        if (!mapping) return "";
+        if (mapping.content_uuid) return `uuid:${mapping.content_uuid}`;
+        if (mapping.content_name) return `name:${mapping.content_name}`;
+        return "";
+      }
+
+      function buildHiperwallMapping() {
+        const contentKey = document.getElementById("hiperwall-content").value;
+        if (!contentKey) return null;
+        const content = state.inventory.contents.find(item => inventoryContentKey(item) === contentKey);
+        const [selector, ...contentParts] = contentKey.split(":");
+        const contentValue = contentParts.join(":");
+        const zoneId = document.getElementById("hiperwall-zone").value;
+        const layout = readHiperwallLayout(zoneId);
+        return {
+          enabled: true,
+          ...(content?.uuid || selector === "uuid" ? { content_uuid: content?.uuid || contentValue } : { content_name: content?.name || contentValue }),
+          ...(zoneId ? { zone_id: zoneId } : {}),
+          ...(layout ? { layout } : {}),
+          display_seconds: Number(document.getElementById("hiperwall-seconds").value)
+        };
+      }
+
+      function buildRulePayload() {
+        const hiperwall = buildHiperwallMapping();
+        const editing = state.rules.find(rule => rule.id === state.editingRuleId);
+        return {
+          name: document.getElementById("rule-name").value.trim(),
+          source_name: document.getElementById("rule-camera").value,
+          rule_type: "visual_color",
+          class_name: "person",
+          geometry: {},
+          parameters: {
+            target_color: document.getElementById("target-color").value,
+            window_size: Number(document.getElementById("window-size").value),
+            minimum_matches: Number(document.getElementById("minimum-matches").value),
+            minimum_color_confidence: Number(document.getElementById("minimum-confidence").value),
+            missing_tolerance_seconds: 2,
+            cooldown_seconds: Number(document.getElementById("cooldown-seconds").value),
+            ...(hiperwall ? { hiperwall } : {})
+          },
+          enabled: editing?.enabled ?? true
+        };
+      }
+
+      function resetRuleForm() {
+        state.editingRuleId = null;
+        document.getElementById("color-rule-form").reset();
+        document.getElementById("window-size").value = 5;
+        document.getElementById("minimum-matches").value = 3;
+        document.getElementById("minimum-confidence").value = 0.35;
+        document.getElementById("cooldown-seconds").value = 30;
+        document.getElementById("hiperwall-seconds").value = 30;
+        document.getElementById("hiperwall-layout-mode").value = "pixels";
+        setLayoutValues();
+        setLayoutControlsEnabled(false);
+        updateLayoutLabels();
+        document.getElementById("rule-form-title").textContent = "새 색상 이벤트";
+        document.getElementById("rule-submit").textContent = "색상 이벤트 추가";
+        document.getElementById("rule-cancel").hidden = true;
+        renderZoneDetail();
+      }
+
+      function beginEdit(rule) {
+        state.editingRuleId = rule.id;
+        const parameters = rule.parameters || {};
+        const mapping = parameters.hiperwall || null;
+        document.getElementById("rule-name").value = rule.name;
+        ensureSelectOption(document.getElementById("rule-camera"), rule.source_name, rule.source_name);
+        document.getElementById("target-color").value = parameters.target_color || "red";
+        document.getElementById("window-size").value = parameters.window_size ?? 5;
+        document.getElementById("minimum-matches").value = parameters.minimum_matches ?? 3;
+        document.getElementById("minimum-confidence").value = parameters.minimum_color_confidence ?? 0.35;
+        document.getElementById("cooldown-seconds").value = parameters.cooldown_seconds ?? 30;
+        const contentKey = mappingContentKey(mapping);
+        ensureSelectOption(document.getElementById("hiperwall-content"), contentKey, mapping?.content_name || mapping?.content_uuid || "기존 콘텐츠");
+        ensureSelectOption(document.getElementById("hiperwall-zone"), mapping?.zone_id || "", mapping?.zone_id ? `기존 Zone · ${mapping.zone_id}` : "Zone 미지정");
+        document.getElementById("hiperwall-seconds").value = mapping?.display_seconds ?? 30;
+        document.getElementById("hiperwall-layout-mode").value = mapping?.layout?.mode || "pixels";
+        setLayoutValues(mapping?.layout || null);
+        setLayoutControlsEnabled(Boolean(mapping?.zone_id));
+        updateLayoutLabels();
+        document.getElementById("rule-form-title").textContent = "색상 이벤트 수정";
+        document.getElementById("rule-submit").textContent = "수정 저장";
+        document.getElementById("rule-cancel").hidden = false;
+        renderZoneDetail();
+        document.getElementById("color-rule-form").scrollIntoView({ behavior: "smooth", block: "start" });
+        setMessage("수정할 내용을 확인한 뒤 저장하세요.");
       }
 
       async function loadInventory() {
@@ -266,7 +451,9 @@
         const camera = state.cameras.find(item => item.stream_path === rule.source_name);
         const color = colorLabels[parameters.target_color] || parameters.target_color;
         const mapping = parameters.hiperwall;
-        return `${camera?.name || rule.source_name} · ${color} · ${parameters.minimum_matches || 3}/${parameters.window_size || 5}${mapping ? ` · Hiperwall ${mapping.zone_id || "Zone 미지정"}` : ""}`;
+        const layout = mapping?.layout;
+        const layoutSummary = layout ? ` · 위치 ${layout.x}, ${layout.y} · 크기 ${layout.width} × ${layout.height}${layout.mode === "percent" ? "%" : "px"}` : "";
+        return `${camera?.name || rule.source_name} · ${color} · ${parameters.minimum_matches || 3}/${parameters.window_size || 5}${mapping ? ` · Hiperwall ${mapping.zone_id || "Zone 미지정"}${layoutSummary}` : ""}`;
       }
 
       async function loadRules() {
@@ -293,7 +480,37 @@
             catch (error) { setMessage(error.message, "error"); }
             finally { toggle.disabled = false; }
           });
-          actions.append(badge, toggle); item.append(info, actions); list.append(item);
+          const test = document.createElement("button"); test.type = "button"; test.className = "toggle test"; test.textContent = "Hiperwall 테스트";
+          test.addEventListener("click", async () => {
+            const mapping = rule.parameters?.hiperwall;
+            if (!mapping) { setMessage("Hiperwall 전송 대상을 먼저 설정해 주세요.", "error"); return; }
+            const zone = mapping.zone_id || "Zone 미지정";
+            const placement = mapping.layout ? `\n위치 ${mapping.layout.x}, ${mapping.layout.y} · 크기 ${mapping.layout.width} × ${mapping.layout.height} (${mapping.layout.mode === "percent" ? "%" : "px"})` : "";
+            if (!window.confirm(`${rule.name} 테스트 이벤트를 ${zone}에 ${mapping.display_seconds || 30}초 동안 표시할까요?${placement}\nLIVE 모드에서는 실제 Hiperwall로 전송됩니다.`)) return;
+            test.disabled = true;
+            try {
+              const result = await api(`/rules/${encodeURIComponent(rule.id)}/test-event`, { method: "POST" });
+              const description = result.mode === "live" ? "Hiperwall 전송 큐에 등록됐습니다." : "DRY RUN 기록으로 생성됐습니다.";
+              setMessage(`테스트 이벤트가 생성됐습니다. ${description} ${result.display_seconds}초 후 자동 종료됩니다.`, "success");
+              await loadEvents();
+            } catch (error) { setMessage(error.message, "error"); }
+            finally { test.disabled = false; }
+          });
+          const edit = document.createElement("button"); edit.type = "button"; edit.className = "toggle"; edit.textContent = "수정";
+          edit.addEventListener("click", () => beginEdit(rule));
+          const remove = document.createElement("button"); remove.type = "button"; remove.className = "toggle danger"; remove.textContent = "삭제";
+          remove.addEventListener("click", async () => {
+            if (!window.confirm(`${rule.name} 이벤트를 삭제할까요?\n과거 실행 기록은 유지됩니다.`)) return;
+            remove.disabled = true;
+            try {
+              await api(`/rules/${encodeURIComponent(rule.id)}`, { method: "DELETE" });
+              if (state.editingRuleId === rule.id) resetRuleForm();
+              setMessage("색상 이벤트가 삭제됐습니다. 과거 실행 기록은 유지됩니다.", "success");
+              await refresh();
+            } catch (error) { setMessage(error.message, "error"); }
+            finally { remove.disabled = false; }
+          });
+          actions.append(badge, toggle, test, edit, remove); item.append(info, actions); list.append(item);
         }
       }
 
@@ -307,7 +524,8 @@
         }
         for (const event of events) {
           const item = document.createElement("div"); item.className = `event-item ${event.event_state}`;
-          const title = document.createElement("strong"); title.textContent = `${event.rule_name} · ${event.event_state === "started" ? "감지 시작" : "감지 종료"}`;
+          const stateLabel = event.event_type === "manual_test_triggered" ? "Hiperwall 테스트" : event.event_state === "occurred" ? "감지 발생" : event.event_state === "started" ? "감지 시작" : "감지 종료";
+          const title = document.createElement("strong"); title.textContent = `${event.rule_name} · ${stateLabel}`;
           const color = colorLabels[event.payload.target_color] || event.payload.target_color || "—";
           const meta = document.createElement("small"); meta.textContent = `Track ${event.track_id} · ${color} · 투표 ${event.payload.matching_votes ?? 0}/${event.payload.observed_votes ?? 0} · 신뢰도 ${Number(event.confidence).toFixed(2)}`;
           item.append(title, meta); list.append(item);
@@ -323,51 +541,24 @@
         const minimumMatches = Number(document.getElementById("minimum-matches").value);
         if (minimumMatches > windowSize) { setMessage("필요 일치 횟수는 검사 횟수보다 클 수 없습니다.", "error"); submit.disabled = false; return; }
         try {
-          const created = await api("/rules", {
-            method: "POST",
-            body: JSON.stringify({
-              name: document.getElementById("rule-name").value.trim(),
-              source_name: document.getElementById("rule-camera").value,
-              rule_type: "visual_color",
-              class_name: "person",
-              geometry: {},
-              parameters: {
-                target_color: document.getElementById("target-color").value,
-                window_size: windowSize,
-                minimum_matches: minimumMatches,
-                minimum_color_confidence: Number(document.getElementById("minimum-confidence").value),
-                missing_tolerance_seconds: 2,
-                cooldown_seconds: Number(document.getElementById("cooldown-seconds").value)
-              }
-            })
+          const editingRuleId = state.editingRuleId;
+          await api(editingRuleId ? `/rules/${encodeURIComponent(editingRuleId)}` : "/rules", {
+            method: editingRuleId ? "PUT" : "POST",
+            body: JSON.stringify(buildRulePayload())
           });
-          const contentKey = document.getElementById("hiperwall-content").value;
-          const content = state.inventory.contents.find(item => inventoryContentKey(item) === contentKey);
-          if (content) {
-            const zoneId = document.getElementById("hiperwall-zone").value;
-            const zone = state.inventory.zones.find(item => item.id === zoneId);
-            const hasGeometry = zone && [zone.left, zone.top, zone.width, zone.height].every(Number.isFinite);
-            await api(`/rules/${encodeURIComponent(created.id)}/hiperwall`, {
-              method: "PUT",
-              body: JSON.stringify({
-                ...(content.uuid ? { content_uuid: content.uuid } : { content_name: content.name }),
-                ...(zoneId ? { zone_id: zoneId } : {}),
-                ...(hasGeometry ? { layout: { mode: "pixels", x: zone.left + zone.width / 2, y: zone.top + zone.height / 2, width: zone.width, height: zone.height } } : {}),
-                display_seconds: Number(document.getElementById("hiperwall-seconds").value)
-              })
-            });
-          }
-          document.getElementById("rule-name").value = "";
-          setMessage("색상 이벤트가 등록됐습니다. 다음 테스트 시작부터 적용됩니다.", "success");
+          resetRuleForm();
+          setMessage(editingRuleId ? "색상 이벤트가 수정됐습니다. 다음 테스트 시작부터 적용됩니다." : "색상 이벤트가 등록됐습니다. 다음 테스트 시작부터 적용됩니다.", "success");
           await refresh();
         } catch (error) { setMessage(error.message, "error"); }
         finally { submit.disabled = false; }
       });
 
+      document.getElementById("rule-cancel").addEventListener("click", () => { resetRuleForm(); setMessage("수정을 취소했습니다."); });
       document.getElementById("rule-reload").addEventListener("click", refresh);
       document.getElementById("hiperwall-reload").addEventListener("click", loadInventory);
-      document.getElementById("hiperwall-zone").addEventListener("change", renderZoneDetail);
-      async function initialize() { await loadCameras(); await Promise.all([loadInventory(), loadRules(), loadEvents()]); }
+      document.getElementById("hiperwall-zone").addEventListener("change", () => { renderZoneDetail(); applyZoneLayoutDefaults(); });
+      document.getElementById("hiperwall-layout-mode").addEventListener("change", applyZoneLayoutDefaults);
+      async function initialize() { await loadCameras(); await Promise.all([loadRuntimeMode(), loadInventory(), loadRules(), loadEvents()]); }
       initialize().catch(error => setMessage(error.message, "error"));
     </script>
   </body>

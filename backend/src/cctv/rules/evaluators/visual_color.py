@@ -51,7 +51,7 @@ class _ColorState:
 
 
 class VisualColorEvaluator:
-    """Emit a lifecycle after a target torso color wins an M-of-N track window."""
+    """Emit one point event when a target torso color wins an M-of-N track window."""
 
     rule_type = "visual_color"
 
@@ -113,13 +113,12 @@ class VisualColorEvaluator:
                 and timestamp_seconds >= state.cooldown_until
             ):
                 state.active = True
+                state.cooldown_until = timestamp_seconds + cooldown
                 events.append(
                     self._event(
                         rule,
                         state,
                         target_color,
-                        "upper_body_color_started",
-                        "started",
                         timestamp_seconds,
                         reason="vote_threshold_met",
                     )
@@ -129,16 +128,7 @@ class VisualColorEvaluator:
                 and len(state.votes) == window_size
                 and match_count < minimum_matches
             ):
-                events.extend(
-                    self._end_state(
-                        rule,
-                        state,
-                        target_color,
-                        timestamp_seconds,
-                        cooldown,
-                        reason="vote_threshold_lost",
-                    )
-                )
+                self._reset_state(state)
 
         for key, state in tuple(self._states.items()):
             if key[0] != rule.id or key[1] in observed_track_ids:
@@ -146,51 +136,21 @@ class VisualColorEvaluator:
             if timestamp_seconds - state.last_seen <= missing_tolerance:
                 continue
             if state.active:
-                events.extend(
-                    self._end_state(
-                        rule,
-                        state,
-                        target_color,
-                        timestamp_seconds,
-                        cooldown,
-                        reason="missing",
-                    )
-                )
-            elif timestamp_seconds >= state.cooldown_until:
+                self._reset_state(state)
+            if timestamp_seconds >= state.cooldown_until:
                 del self._states[key]
         return tuple(events)
 
-    def _end_state(
-        self,
-        rule: RuleDefinition,
-        state: _ColorState,
-        target_color: str,
-        timestamp_seconds: float,
-        cooldown: float,
-        *,
-        reason: str,
-    ) -> tuple[RuleEvent, ...]:
-        event = self._event(
-            rule,
-            state,
-            target_color,
-            "upper_body_color_ended",
-            "ended",
-            timestamp_seconds,
-            reason=reason,
-        )
+    @staticmethod
+    def _reset_state(state: _ColorState) -> None:
         state.active = False
         state.votes.clear()
-        state.cooldown_until = timestamp_seconds + cooldown
-        return (event,)
 
     @staticmethod
     def _event(
         rule: RuleDefinition,
         state: _ColorState,
         target_color: str,
-        event_type: str,
-        event_state: str,
         timestamp_seconds: float,
         *,
         reason: str,
@@ -205,8 +165,8 @@ class VisualColorEvaluator:
         return RuleEvent(
             rule_id=rule.id,
             track_id=state.last_sample.track_id,
-            event_type=event_type,
-            event_state=event_state,
+            event_type="upper_body_color_detected",
+            event_state="occurred",
             occurred_at_seconds=timestamp_seconds,
             class_name=state.last_sample.class_name,
             confidence=round(float(confidence), 6),

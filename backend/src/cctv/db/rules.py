@@ -135,8 +135,79 @@ class RuleRepository:
 
     def get_rule(self, rule_id: str) -> RuleRecord | None:
         with closing(connect_database(self.database_path)) as connection:
-            row = connection.execute("SELECT * FROM rules WHERE id = ?", (rule_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM rules WHERE id = ? AND deleted_at IS NULL",
+                (rule_id,),
+            ).fetchone()
         return _rule_from_row(row) if row is not None else None
+
+    def update_rule(
+        self,
+        rule_id: str,
+        *,
+        name: str,
+        source_name: str,
+        rule_type: str,
+        geometry: dict[str, Any],
+        parameters: dict[str, Any] | None = None,
+        class_name: str | None = None,
+        enabled: bool = True,
+    ) -> RuleRecord:
+        """Replace one visible rule configuration while retaining its identity."""
+        normalized_name = _required_text(name, "name")
+        normalized_source = _required_text(source_name, "source_name")
+        normalized_type = _required_text(rule_type, "rule_type")
+        normalized_class = class_name.strip() if class_name is not None else None
+        if normalized_class == "":
+            raise ValueError("class_name must not be empty")
+        geometry_json = _json_object(geometry, "geometry")
+        parameters_json = _json_object(parameters or {}, "parameters")
+        with closing(connect_database(self.database_path)) as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE rules
+                SET name = ?, source_name = ?, rule_type = ?, class_name = ?,
+                    geometry_json = ?, parameters_json = ?, enabled = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (
+                    normalized_name,
+                    normalized_source,
+                    normalized_type,
+                    normalized_class,
+                    geometry_json,
+                    parameters_json,
+                    int(enabled),
+                    rule_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"rule does not exist: {rule_id}")
+            row = connection.execute(
+                "SELECT * FROM rules WHERE id = ? AND deleted_at IS NULL",
+                (rule_id,),
+            ).fetchone()
+        if row is None:  # pragma: no cover - protected by the transaction
+            raise RuntimeError("updated rule could not be read")
+        return _rule_from_row(row)
+
+    def delete_rule(self, rule_id: str) -> None:
+        """Hide a rule while retaining its events and durable display actions."""
+        with closing(connect_database(self.database_path)) as connection, connection:
+            cursor = connection.execute(
+                """
+                UPDATE rules
+                SET enabled = 0,
+                    source_name = '__deleted__/' || id,
+                    deleted_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND deleted_at IS NULL
+                """,
+                (rule_id,),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"rule does not exist: {rule_id}")
 
     def set_rule_enabled(self, rule_id: str, enabled: bool) -> RuleRecord:
         """Enable or disable one rule without changing its geometry contract."""
@@ -145,7 +216,7 @@ class RuleRepository:
                 """
                 UPDATE rules
                 SET enabled = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND deleted_at IS NULL
                 """,
                 (int(enabled), rule_id),
             )
@@ -164,7 +235,7 @@ class RuleRepository:
         """Add, replace, or remove the Hiperwall mapping inside rule parameters."""
         with closing(connect_database(self.database_path)) as connection, connection:
             row = connection.execute(
-                "SELECT parameters_json FROM rules WHERE id = ?",
+                "SELECT parameters_json FROM rules WHERE id = ? AND deleted_at IS NULL",
                 (rule_id,),
             ).fetchone()
             if row is None:
@@ -178,7 +249,7 @@ class RuleRepository:
                 """
                 UPDATE rules
                 SET parameters_json = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
+                WHERE id = ? AND deleted_at IS NULL
                 """,
                 (_json_object(parameters, "parameters"), rule_id),
             )
@@ -200,7 +271,7 @@ class RuleRepository:
         enabled: bool | None = None,
     ) -> RulePage:
         _validate_pagination(page, limit)
-        clauses: list[str] = []
+        clauses: list[str] = ["deleted_at IS NULL"]
         parameters: list[object] = []
         for column, value in (("source_name", source_name), ("rule_type", rule_type)):
             if value is not None:
@@ -210,7 +281,7 @@ class RuleRepository:
         if enabled is not None:
             clauses.append("enabled = ?")
             parameters.append(int(enabled))
-        where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        where_sql = f" WHERE {' AND '.join(clauses)}"
         offset = (page - 1) * limit
         with closing(connect_database(self.database_path)) as connection:
             total = int(

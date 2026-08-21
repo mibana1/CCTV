@@ -8,15 +8,25 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
+from cctv.core.settings import AppMode
 from cctv.db import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
+    AnalysisRunStatus,
+    DetectionRepository,
     RuleEventRecord,
     RuleRecord,
     RuleRepository,
 )
-from cctv.hiperwall import HiperwallMappingError, validate_rule_hiperwall_mapping
-from cctv.rules import RuleConfigurationError, RuleDefinition, RuleEngine
+from cctv.hiperwall import (
+    HiperwallDryRunPlanner,
+    HiperwallLivePlanner,
+    HiperwallMappingError,
+    validate_rule_hiperwall_mapping,
+)
+from cctv.hiperwall.mapping import mapping_from_rule
+from cctv.inference import BoundingBox, Detection, FrameDetections
+from cctv.rules import RuleConfigurationError, RuleDefinition, RuleEngine, RuleEvent
 
 router = APIRouter(tags=["rules"])
 
@@ -67,6 +77,15 @@ class RulePageResponse(BaseModel):
     total: int
     has_next: bool
     items: list[RuleResponse]
+
+
+class RuleTestEventResponse(BaseModel):
+    rule_event_id: str
+    analysis_run_id: str
+    display_action_id: str
+    mode: str
+    status: str
+    display_seconds: int
 
 
 class RuleTypeListResponse(BaseModel):
@@ -156,6 +175,197 @@ def create_rule(request: Request, body: RuleCreateRequest) -> RuleResponse:
             detail="a rule with this name already exists for the source",
         ) from error
     return _rule_response(record)
+
+
+@router.put(
+    "/rules/{rule_id}",
+    response_model=RuleResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Rule not found"},
+        status.HTTP_409_CONFLICT: {"description": "Rule name already exists for source"},
+    },
+)
+def update_rule(
+    request: Request,
+    rule_id: str,
+    body: RuleCreateRequest,
+) -> RuleResponse:
+    """Validate and replace a dashboard-editable rule configuration."""
+    repository = _repository(request)
+    if repository.get_rule(rule_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="rule not found")
+    definition = RuleDefinition(
+        id=rule_id,
+        name=body.name,
+        source_name=body.source_name,
+        rule_type=body.rule_type,
+        class_name=body.class_name,
+        geometry=body.geometry,
+        parameters=body.parameters,
+        enabled=body.enabled,
+    )
+    _validate_definition(request, definition)
+    try:
+        record = repository.update_rule(
+            rule_id,
+            name=body.name,
+            source_name=body.source_name,
+            rule_type=body.rule_type,
+            class_name=body.class_name,
+            geometry=body.geometry,
+            parameters=body.parameters,
+            enabled=body.enabled,
+        )
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="rule not found",
+        ) from error
+    except sqlite3.IntegrityError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="a rule with this name already exists for the source",
+        ) from error
+    return _rule_response(record)
+
+
+@router.delete(
+    "/rules/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={status.HTTP_404_NOT_FOUND: {"description": "Rule not found"}},
+)
+def delete_rule(request: Request, rule_id: str) -> None:
+    """Soft-delete a rule so its historical events and actions remain queryable."""
+    try:
+        _repository(request).delete_rule(rule_id)
+    except LookupError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="rule not found",
+        ) from error
+
+
+@router.post(
+    "/rules/{rule_id}/test-event",
+    response_model=RuleTestEventResponse,
+    status_code=status.HTTP_201_CREATED,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Rule not found"},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: {
+            "description": "Rule has no enabled Hiperwall mapping"
+        },
+    },
+)
+def send_rule_test_event(request: Request, rule_id: str) -> RuleTestEventResponse:
+    """Persist an auditable manual event and simulate or queue its mapped action."""
+    current = _repository(request).get_rule(rule_id)
+    if current is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="rule not found")
+    definition = current.to_definition()
+    settings = request.app.state.settings
+    try:
+        mapping = mapping_from_rule(
+            definition,
+            default_display_seconds=settings.hiperwall_default_display_seconds,
+        )
+    except HiperwallMappingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+    if mapping is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Hiperwall 전송 대상이 설정된 이벤트만 테스트할 수 있습니다.",
+        )
+
+    event = RuleEvent(
+        rule_id=current.id,
+        track_id=1,
+        event_type="manual_test_triggered",
+        event_state="occurred",
+        occurred_at_seconds=0,
+        class_name=current.class_name or "person",
+        confidence=1,
+        payload={
+            "manual_test": True,
+            "rule_type": current.rule_type,
+            "trigger": "dashboard",
+        },
+    )
+    repository = DetectionRepository(settings.database_path)
+    run = repository.create_analysis_run(
+        source_type="rtsp",
+        source_name=current.source_name,
+        detector_type="manual_rule_test",
+        model_name="manual-rule-test",
+        model_sha256="0" * 64,
+        device="cpu",
+        input_size=32,
+        confidence_threshold=0.01,
+        nms_threshold=0,
+        sample_fps=1,
+    )
+    try:
+        planner = (
+            HiperwallLivePlanner(settings, (definition,))
+            if settings.app_mode is AppMode.LIVE
+            else HiperwallDryRunPlanner(settings, (definition,))
+        )
+        actions = planner.plan(
+            (event,),
+            analysis_run_id=run.id,
+            source_name=current.source_name,
+        )
+        if len(actions) != 1:
+            raise RuntimeError("manual Hiperwall test did not produce one display action")
+        repository.save_frame(
+            run.id,
+            FrameDetections(
+                source_index=0,
+                sample_index=0,
+                timestamp_seconds=0,
+                frame_width=1,
+                frame_height=1,
+                inference_seconds=0,
+                detections=(
+                    Detection(
+                        class_id=0,
+                        label=current.class_name or "person",
+                        confidence=1,
+                        box=BoundingBox(x1=0, y1=0, x2=1, y2=1),
+                        track_id=1,
+                    ),
+                ),
+            ),
+            active_track_ids={1},
+            rule_events=(event,),
+            display_actions=actions,
+        )
+        repository.finish_analysis_run(run.id, status=AnalysisRunStatus.COMPLETED)
+    except Exception as error:
+        try:
+            repository.finish_analysis_run(
+                run.id,
+                status=AnalysisRunStatus.FAILED,
+                error_type=type(error).__name__,
+            )
+        except LookupError:
+            pass
+        raise
+
+    worker = getattr(request.app.state, "hiperwall_worker", None)
+    if worker is not None:
+        worker.wake()
+    action = actions[0]
+    return RuleTestEventResponse(
+        rule_event_id=event.id,
+        analysis_run_id=run.id,
+        display_action_id=action.id,
+        mode=action.mode,
+        status=action.status,
+        display_seconds=mapping.display_seconds,
+    )
 
 
 @router.get("/rules", response_model=RulePageResponse)
@@ -336,6 +546,22 @@ def list_rule_events(
 
 def _repository(request: Request) -> RuleRepository:
     return RuleRepository(request.app.state.database.path)
+
+
+def _validate_definition(request: Request, definition: RuleDefinition) -> None:
+    try:
+        RuleEngine((definition,))
+        validate_rule_hiperwall_mapping(
+            definition,
+            default_display_seconds=(
+                request.app.state.settings.hiperwall_default_display_seconds
+            ),
+        )
+    except (RuleConfigurationError, HiperwallMappingError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
 
 
 def _rule_response(record: RuleRecord) -> RuleResponse:

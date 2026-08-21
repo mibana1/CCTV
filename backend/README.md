@@ -287,8 +287,8 @@ MediaMTX Control API는 `127.0.0.1:9997`에만 바인딩합니다. 내부 전용
 - `loitering`: polygon 안에서 지정 시간 체류 시 `loitering_started`, 이탈 시
   `loitering_ended`
 - `visual_color`: 추적된 사람의 상의 Crop을 HSV로 분류하고 최근 N회 중 M회가
-  목표 색상이면 `upper_body_color_started`, 조건이 사라지면
-  `upper_body_color_ended`
+  목표 색상이면 단발 `upper_body_color_detected`/`occurred` 이벤트 생성. 조건이
+  해제되고 쿨다운이 지난 뒤에만 같은 트랙을 다시 감지
 
 ```json
 POST /rules
@@ -312,9 +312,20 @@ POST /rules
 `line_crossing`은 `geometry.type=line`과 두 점을 사용하며 `direction`은 `any`,
 `negative_to_positive`, `positive_to_negative` 중 하나입니다. `loitering`은
 `duration_seconds`가 기본 30초입니다. `GET /rule-types`, `GET /rules`,
-`PATCH /rules/{id}/enabled`, `GET /rule-events`로 지원 유형·설정·발생 이력을
-조회하거나 활성 상태를 바꿀 수 있습니다. 이벤트는 해당 프레임, 검출, 트랙과
-같은 SQLite 트랜잭션으로 저장됩니다.
+`PUT /rules/{id}`, `DELETE /rules/{id}`, `PATCH /rules/{id}/enabled`,
+`GET /rule-events`로 지원 유형·설정·발생 이력을 조회하거나 수정·삭제·활성 상태를
+바꿀 수 있습니다. 삭제된 규칙은 활성 목록에서만 숨겨지며 과거 이벤트와 Hiperwall
+작업은 유지됩니다. Hiperwall 매핑이 있는 규칙은
+`POST /rules/{id}/test-event`로 영상 분석 없이 수동 `occurred` 이벤트를 생성해
+DRY RUN 기록 또는 LIVE 전송 큐를 검증할 수 있습니다. 이벤트는 해당 프레임,
+검출, 트랙과 같은 SQLite 트랜잭션으로 저장됩니다.
+
+색상 이벤트 화면은 선택한 Hiperwall Zone 좌표를 기본 배치로 채우며, 사용자가
+`layout.mode=pixels|percent`와 X·Y·너비·높이를 직접 지정할 수 있습니다. 픽셀
+모드의 X·Y는 화면 중심 좌표이고 비율 모드의 X·Y는 Zone 내부 좌상단 기준입니다.
+로컬 테스트 화면은 개발 계열 환경과 `CCTV_TEST_DASHBOARD_ENABLED=true`, localhost
+접속 조건을 유지하면서 DRY RUN과 LIVE 모두 허용합니다. LIVE 화면에는 외부 전송
+상태를 작은 `LIVE` 배지로 표시합니다.
 
 `visual_color`은 `geometry={}`와 `class_name=person`을 사용합니다. 기본 파라미터는
 `window_size=5`, `minimum_matches=3`, `minimum_color_confidence=0.35`,

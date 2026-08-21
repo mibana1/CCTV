@@ -244,3 +244,124 @@ def test_rules_api_creates_and_validates_visual_color_rules(tmp_path: Path) -> N
     assert "minimum_matches" in invalid_votes.json()["detail"]
     assert invalid_color.status_code == 422
     assert "target_color" in invalid_color.json()["detail"]
+
+
+def test_rules_api_updates_tests_and_soft_deletes_visual_color_rule(
+    tmp_path: Path,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        app_mode="dry_run",
+        database_path=tmp_path / "cctv.db",
+        model_path=tmp_path / "model.onnx",
+        log_path=tmp_path / "cctv.jsonl",
+    )
+    body = {
+        "name": "Lobby red shirt",
+        "source_name": "camera-lobby",
+        "rule_type": "visual_color",
+        "class_name": "person",
+        "geometry": {},
+        "parameters": {
+            "target_color": "red",
+            "window_size": 5,
+            "minimum_matches": 3,
+            "minimum_color_confidence": 0.35,
+            "cooldown_seconds": 30,
+            "hiperwall": {
+                "enabled": True,
+                "content_uuid": "content-1",
+                "zone_id": "zone-1",
+                "layout": {
+                    "mode": "pixels",
+                    "x": 960,
+                    "y": 540,
+                    "width": 640,
+                    "height": 360,
+                },
+                "display_seconds": 12,
+            },
+        },
+        "enabled": True,
+    }
+
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/rules", json=body)
+        rule_id = created.json()["id"]
+        updated_body = {
+            **body,
+            "name": "Lobby blue shirt",
+            "parameters": {**body["parameters"], "target_color": "blue"},
+        }
+        updated = client.put(f"/rules/{rule_id}", json=updated_body)
+        tested = client.post(f"/rules/{rule_id}/test-event")
+        test_result = tested.json()
+        action = client.get(f"/hiperwall-actions/{test_result['display_action_id']}")
+        run = client.get(f"/analysis-runs/{test_result['analysis_run_id']}")
+        events_before_delete = client.get("/rule-events", params={"rule_id": rule_id})
+        deleted = client.delete(f"/rules/{rule_id}")
+        missing = client.get(f"/rules/{rule_id}")
+        listed = client.get("/rules", params={"rule_type": "visual_color"})
+        events_after_delete = client.get("/rule-events", params={"rule_id": rule_id})
+        recreated = client.post("/rules", json=updated_body)
+        repeated_delete = client.delete(f"/rules/{rule_id}")
+
+    assert created.status_code == 201
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Lobby blue shirt"
+    assert updated.json()["parameters"]["target_color"] == "blue"
+    assert tested.status_code == 201
+    assert test_result["mode"] == "dry_run"
+    assert test_result["status"] == "simulated"
+    assert test_result["display_seconds"] == 12
+    assert action.status_code == 200
+    assert action.json()["request"]["close_after_seconds"] == 12
+    assert action.json()["request"]["target"]["layout"] == {
+        "mode": "pixels",
+        "x": 960,
+        "y": 540,
+        "width": 640,
+        "height": 360,
+    }
+    assert action.json()["request"]["rule_event"]["payload"]["manual_test"] is True
+    assert run.status_code == 200
+    assert run.json()["status"] == "completed"
+    assert events_before_delete.json()["total"] == 1
+    assert events_before_delete.json()["items"][0]["event_type"] == "manual_test_triggered"
+    assert deleted.status_code == 204
+    assert missing.status_code == 404
+    assert listed.json()["total"] == 0
+    assert events_after_delete.json()["total"] == 1
+    assert events_after_delete.json()["items"][0]["rule_name"] == "Lobby blue shirt"
+    assert recreated.status_code == 201
+    assert repeated_delete.status_code == 404
+
+
+def test_rules_api_rejects_manual_test_without_hiperwall_mapping(tmp_path: Path) -> None:
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_path=tmp_path / "cctv.db",
+        model_path=tmp_path / "model.onnx",
+        log_path=tmp_path / "cctv.jsonl",
+    )
+    body = {
+        "name": "No output",
+        "source_name": "camera",
+        "rule_type": "visual_color",
+        "class_name": "person",
+        "geometry": {},
+        "parameters": {
+            "target_color": "red",
+            "window_size": 5,
+            "minimum_matches": 3,
+        },
+    }
+
+    with TestClient(create_app(settings)) as client:
+        created = client.post("/rules", json=body)
+        response = client.post(f"/rules/{created.json()['id']}/test-event")
+
+    assert response.status_code == 422
+    assert "Hiperwall" in response.json()["detail"]

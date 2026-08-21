@@ -299,6 +299,7 @@ def test_local_video_cli_emits_upper_body_color_event_and_hiperwall_action(
     database_path = tmp_path / "runtime" / "cctv.db"
     monkeypatch.setattr("cctv.workers.local_video.create_detector", lambda config: detector)
     monkeypatch.setenv("CCTV_DETECTOR_TYPE", "custom")
+    monkeypatch.setenv("CCTV_APP_MODE", "dry_run")
     monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "false")
     monkeypatch.setenv("CCTV_YOLO_ENABLED", "false")
     monkeypatch.setenv("CCTV_PERSIST_DETECTIONS", "true")
@@ -358,10 +359,12 @@ def test_local_video_cli_emits_upper_body_color_event_and_hiperwall_action(
     assert output["analysis"]["rules"]["emitted_event_count"] == 1
     assert output["analysis"]["hiperwall"]["simulated_action_count"] == 1
     assert events.total == 1
-    assert events.items[0].event_type == "upper_body_color_started"
+    assert events.items[0].event_type == "upper_body_color_detected"
+    assert events.items[0].event_state == "occurred"
     assert events.items[0].payload["target_color"] == "black"
     assert actions.total == 1
     assert actions.items[0].request["target"]["zone_id"] == "Alert Zone"
+    assert actions.items[0].request["close_after_seconds"] == 30
 
 
 def test_local_video_cli_uses_interchangeable_detector_interface(

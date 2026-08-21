@@ -60,19 +60,20 @@ class HiperwallClient:
                 "hiperwall_transport_error",
                 "Hiperwall connection failed",
             ) from error
-        if response.status_code < 200 or response.status_code >= 300:
-            raise HiperwallRequestError(
-                f"hiperwall_http_{response.status_code}",
-                f"Hiperwall returned HTTP {response.status_code}",
-                retryable=response.status_code >= 500,
-            )
+        self._raise_for_status(response, context="inventory")
         return {"http_status": response.status_code, "hello": response.text.strip()}
 
     def inventory(self) -> dict[str, Any]:
         """Return HiperInterface content, open-instance, wall, and Zone metadata."""
         hello = self.hello()
-        content_response = self._post_xml(self._action_xml("list"))
-        walls_response = self._post_xml(self._action_xml("walls"))
+        content_response = self._post_xml(
+            self._action_xml("list"),
+            context="inventory",
+        )
+        walls_response = self._post_xml(
+            self._action_xml("walls"),
+            context="inventory",
+        )
         contents = _parse_content_list_xml(content_response.text)
         zones, walls = _parse_walls_xml(walls_response.text)
         return {
@@ -86,6 +87,7 @@ class HiperwallClient:
         operation = request.get("operation")
         if operation == "open_source":
             xml = self._open_xml(request)
+            self._validate_open_target(request)
         elif operation == "restore_layout":
             xml = self._close_xml(request)
         else:
@@ -94,7 +96,7 @@ class HiperwallClient:
                 "Unsupported Hiperwall operation",
                 retryable=False,
             )
-        response = self._post_xml(xml)
+        response = self._post_xml(xml, context=str(operation))
         return {
             "external_request_sent": True,
             "http_status": response.status_code,
@@ -102,7 +104,7 @@ class HiperwallClient:
             "instance_id": request["instance_id"],
         }
 
-    def _post_xml(self, xml: str) -> httpx.Response:
+    def _post_xml(self, xml: str, *, context: str) -> httpx.Response:
         try:
             response = self._client.post(
                 f"{self.base_url}/xmlcommand",
@@ -125,12 +127,7 @@ class HiperwallClient:
                 "hiperwall_transport_error",
                 "Hiperwall request failed",
             ) from error
-        if response.status_code < 200 or response.status_code >= 300:
-            raise HiperwallRequestError(
-                f"hiperwall_http_{response.status_code}",
-                f"Hiperwall returned HTTP {response.status_code}",
-                retryable=response.status_code >= 500,
-            )
+        self._raise_for_status(response, context=context)
         if _contains_xml_error(response.text):
             raise HiperwallRequestError(
                 "hiperwall_business_error",
@@ -138,6 +135,58 @@ class HiperwallClient:
                 retryable=False,
             )
         return response
+
+    def _raise_for_status(self, response: httpx.Response, *, context: str) -> None:
+        if 200 <= response.status_code < 300:
+            return
+        if response.status_code == 401 or (response.status_code == 403 and context == "inventory"):
+            raise HiperwallRequestError(
+                "hiperwall_auth_failed",
+                "Hiperwall authentication failed while reading inventory",
+                retryable=False,
+            )
+        if response.status_code == 403:
+            raise HiperwallRequestError(
+                "hiperwall_command_forbidden",
+                "Hiperwall rejected the command because access was forbidden",
+                retryable=False,
+            )
+        raise HiperwallRequestError(
+            f"hiperwall_http_{response.status_code}",
+            f"Hiperwall returned HTTP {response.status_code}",
+            retryable=response.status_code >= 500,
+        )
+
+    def _validate_open_target(self, request: dict[str, Any]) -> None:
+        target = request.get("target")
+        if not isinstance(target, dict):
+            return
+        selector = target.get("selector")
+        value = target.get("value")
+        if selector not in {"name", "uuid"} or not isinstance(value, str) or not value:
+            return
+
+        inventory = self.inventory()
+        contents = inventory["contents"]
+        if not any(content.get(selector) == value for content in contents):
+            target_label = "UUID" if selector == "uuid" else "name"
+            raise HiperwallRequestError(
+                "hiperwall_content_not_found",
+                f"Configured Hiperwall content {target_label} is no longer present in inventory",
+                retryable=False,
+            )
+
+        zone_id = target.get("zone_id")
+        if (
+            isinstance(zone_id, str)
+            and zone_id
+            and not any(zone.get("id") == zone_id for zone in inventory["zones"])
+        ):
+            raise HiperwallRequestError(
+                "hiperwall_zone_not_found",
+                "Configured Hiperwall Zone is no longer present in inventory",
+                retryable=False,
+            )
 
     def _root(self) -> ElementTree.Element:
         root = ElementTree.Element("Commands")
@@ -292,9 +341,7 @@ def _parse_instance(element: ElementTree.Element) -> dict[str, Any]:
         "border_rgb": _child_text(element, "borderRGB") or None,
         "border_visibility": _number(_child_text(element, "bordervis")),
         "audio_volume": audio[0] if audio else None,
-        "audio_muted": (
-            str(audio[1]).casefold() == "muted" if audio and len(audio) > 1 else None
-        ),
+        "audio_muted": (str(audio[1]).casefold() == "muted" if audio and len(audio) > 1 else None),
     }
 
 

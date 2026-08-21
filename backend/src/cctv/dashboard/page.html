@@ -42,6 +42,8 @@
       .health { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: .88rem; }
       .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warning); box-shadow: 0 0 14px currentColor; }
       .dot.ok { background: var(--accent); }
+      .runtime-mode { display: inline-flex; align-items: center; border: 1px solid rgba(255, 107, 114, .55); border-radius: 999px; padding: 4px 8px; color: #ffadb1; background: rgba(255, 107, 114, .12); font-size: .68rem; font-weight: 900; letter-spacing: .08em; }
+      .runtime-mode[hidden] { display: none; }
       .grid { display: grid; grid-template-columns: minmax(260px, 360px) 1fr; gap: 20px; margin-top: 26px; }
       .camera-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(320px, .8fr); gap: 20px; align-items: start; margin-top: 26px; }
       .stack { display: grid; gap: 20px; align-content: start; }
@@ -131,11 +133,12 @@
     <main class="shell">
       <header>
         <div>
-          <p class="eyebrow">LOCAL · DRY RUN</p>
+          <p class="eyebrow">LOCAL · CCTV TEST</p>
           <h1>RTSP 얼굴 인식 테스트</h1>
           <p>터미널 로그 대신 연결 상태, 인식 결과, 자원 사용량과 스냅샷을 한 화면에서 확인합니다.</p>
         </div>
         <div class="header-actions">
+          <span id="live-mode" class="runtime-mode" hidden>LIVE</span>
           <a class="nav-link" href="/test-color-events">색상 이벤트</a>
           <a class="nav-link" href="/test-identities">사람 등록</a>
           <div class="health"><span id="health-dot" class="dot"></span><span id="health-text">API 확인 중</span></div>
@@ -327,6 +330,8 @@
           const health = await api("/health");
           document.getElementById("health-dot").classList.toggle("ok", health.status === "ok");
           text("health-text", `API 정상 · DB v${health.checks.database.schema_version}`);
+          const isLive = health.mode === "live";
+          document.getElementById("live-mode").hidden = !isLive;
         } catch (error) {
           text("health-text", error.message);
         }
