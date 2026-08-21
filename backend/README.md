@@ -74,7 +74,7 @@ with LocalVideoDecoder("sample.mp4", sample_fps=2) as decoder:
 `DetectorConfig.options`로 전달할 수 있습니다. DB에는 실행별 `detector_type`도
 저장되어 모델 교체 후 결과를 구분할 수 있습니다.
 
-기본 YOLO 분석기는 OpenCV DNN으로 ONNX 모델을 로드하며 모델을 자동으로
+기본 CPU YOLO 분석기는 OpenCV DNN으로 ONNX 모델을 로드하며 모델을 자동으로
 다운로드하지 않습니다. `--analyze` 또는 `CCTV_DETECTOR_ENABLED=true`로
 명시적으로 활성화하고 `CCTV_MODEL_PATH`에 로컬 모델을 배치합니다. 표준 COCO
 80개 클래스는 내장 이름을 사용하며, 커스텀 모델은 `CCTV_MODEL_CLASSES_PATH`에
@@ -83,6 +83,16 @@ with LocalVideoDecoder("sample.mp4", sample_fps=2) as decoder:
 박스를 원본 프레임 좌표로 복원합니다. 프레임별 결과는 DEBUG 구조화 로그에,
 전체 처리량과 평균 추론 시간은 종료 JSON 및 `detector_run_completed` 로그에
 기록됩니다.
+
+`CCTV_AI_DEVICE=cuda`에서는 `onnxruntime-gpu`의 `CUDAExecutionProvider`를 사용하는
+별도 adapter가 선택됩니다. CUDA session은 CPU EP fallback을 금지한 상태로 생성되며,
+Provider 미설치·CUDA 라이브러리 누락·모델의 CUDA 미지원 연산은 기본적으로 시작
+실패 처리됩니다. `CCTV_AI_ALLOW_CPU_FALLBACK=true`를 명시한 경우에만 기존 OpenCV
+CPU adapter로 전환되고 detector metadata와 Worker 상태에 fallback 사유가 남습니다.
+
+GPU 이미지는 저장소 루트의 `compose.gpu.yaml` overlay와 `Dockerfile.gpu`를 사용합니다.
+GPU가 없는 개발 PC에서도 코드·Compose·fallback 경로는 검증할 수 있지만, 실제
+Provider 실행·VRAM·다채널 처리량은 NVIDIA GPU 호스트에서 별도로 완료해야 합니다.
 
 YOLO가 활성화되면 `CCTV_PERSIST_DETECTIONS=true` 기본값에 따라 실행 정보,
 분석한 프레임과 검출 객체를 `CCTV_DATABASE_PATH`의 SQLite에 저장합니다. 각

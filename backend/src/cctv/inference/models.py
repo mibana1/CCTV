@@ -50,6 +50,10 @@ class DetectorMetadata:
     input_size: int
     confidence_threshold: float
     nms_threshold: float
+    requested_device: str = "cpu"
+    execution_provider: str = "unknown"
+    cpu_fallback: bool = False
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +72,10 @@ class DetectorRunSummary:
     total_detections: int
     total_inference_seconds: float
     average_inference_seconds: float
+    requested_device: str = "cpu"
+    execution_provider: str = "unknown"
+    cpu_fallback: bool = False
+    fallback_reason: str | None = None
 
 
 __all__ = [

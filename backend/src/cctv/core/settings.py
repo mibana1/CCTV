@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     app_env: str = "development"
     app_mode: AppMode = AppMode.DRY_RUN
     ai_device: AiDevice = AiDevice.CPU
+    ai_allow_cpu_fallback: bool = False
+    ai_cuda_device_id: int = Field(default=0, ge=0, le=63)
+    ai_cuda_gpu_mem_limit_mb: int | None = Field(default=None, ge=256, le=1_048_576)
     analysis_fps: float = Field(default=2.0, gt=0, le=30)
     detector_enabled: bool = False
     detector_type: str = "yolo_onnx"
@@ -195,6 +198,12 @@ class Settings(BaseSettings):
     def normalize_execution_mode(cls, value: object) -> object:
         """Accept case-insensitive execution mode and device values."""
         return value.lower() if isinstance(value, str) else value
+
+    @field_validator("ai_cuda_gpu_mem_limit_mb", mode="before")
+    @classmethod
+    def empty_cuda_memory_limit_is_unset(cls, value: object) -> object:
+        """Allow an empty Compose/.env value to mean no explicit CUDA arena limit."""
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("hiperwall_auth_mode", mode="before")
     @classmethod
@@ -404,6 +413,17 @@ class Settings(BaseSettings):
         if self.detector_nms_threshold is not None:
             return self.detector_nms_threshold
         return self.yolo_nms_threshold
+
+    @property
+    def detector_runtime_options(self) -> dict[str, object]:
+        """Return accelerator options without coupling workers to one detector adapter."""
+        options: dict[str, object] = {
+            "allow_cpu_fallback": self.ai_allow_cpu_fallback,
+            "cuda_device_id": self.ai_cuda_device_id,
+        }
+        if self.ai_cuda_gpu_mem_limit_mb is not None:
+            options["cuda_gpu_mem_limit_mb"] = self.ai_cuda_gpu_mem_limit_mb
+        return options
 
     @property
     def detection_class_name_list(self) -> tuple[str, ...]:

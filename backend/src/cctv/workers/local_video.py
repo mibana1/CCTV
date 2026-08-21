@@ -397,7 +397,20 @@ def run(argv: Sequence[str] | None = None) -> None:
                         if arguments.nms_threshold is not None
                         else settings.effective_detector_nms_threshold
                     ),
+                    options=settings.detector_runtime_options,
                 )
+            )
+            detector_metadata = detector.metadata
+            logger.info(
+                "Detector runtime resolved",
+                extra={
+                    "event": "detector_runtime_resolved",
+                    "requested_device": detector_metadata.requested_device,
+                    "effective_device": detector_metadata.device,
+                    "execution_provider": detector_metadata.execution_provider,
+                    "cpu_fallback": detector_metadata.cpu_fallback,
+                    "fallback_reason": detector_metadata.fallback_reason,
+                },
             )
             if settings.tracking_enabled:
                 tracker = IoUTracker(

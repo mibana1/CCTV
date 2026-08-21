@@ -1,0 +1,19 @@
+# Opt-in overlay for an NVIDIA GPU host with Docker GPU support configured.
+# Usage: docker compose -f compose.yaml -f compose.gpu.yaml up -d --build backend
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.gpu
+    environment:
+      CCTV_AI_DEVICE: cuda
+      CCTV_AI_ALLOW_CPU_FALLBACK: ${CCTV_AI_ALLOW_CPU_FALLBACK:-false}
+      CCTV_AI_CUDA_DEVICE_ID: ${CCTV_AI_CUDA_DEVICE_ID:-0}
+      CCTV_AI_CUDA_GPU_MEM_LIMIT_MB: ${CCTV_AI_CUDA_GPU_MEM_LIMIT_MB:-}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

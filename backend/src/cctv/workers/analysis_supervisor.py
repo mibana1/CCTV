@@ -64,6 +64,11 @@ class AnalysisWorkerSnapshot:
     next_restart_at: datetime | None
     last_error_type: str | None
     last_message: str | None
+    requested_device: str | None = None
+    effective_device: str | None = None
+    execution_provider: str | None = None
+    cpu_fallback: bool = False
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +123,11 @@ class _ManagedWorker:
     next_restart_monotonic: float = 0.0
     last_error_type: str | None = None
     last_message: str | None = None
+    requested_device: str | None = None
+    effective_device: str | None = None
+    execution_provider: str | None = None
+    cpu_fallback: bool = False
+    fallback_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,6 +423,11 @@ class AnalysisSupervisor:
             entry.next_restart_monotonic = 0.0
             entry.last_error_type = None
             entry.last_message = "analysis worker process started"
+            entry.requested_device = self.settings.ai_device.value
+            entry.effective_device = None
+            entry.execution_provider = None
+            entry.cpu_fallback = False
+            entry.fallback_reason = None
         Thread(
             target=self._read_worker_output,
             args=(entry.camera_id, process),
@@ -559,6 +574,12 @@ class AnalysisSupervisor:
                 return
             if event == "analysis_run_created":
                 entry.analysis_run_id = _optional_text(record.get("analysis_run_id"))
+            elif event == "detector_runtime_resolved":
+                entry.requested_device = _optional_text(record.get("requested_device"))
+                entry.effective_device = _optional_text(record.get("effective_device"))
+                entry.execution_provider = _optional_text(record.get("execution_provider"))
+                entry.cpu_fallback = record.get("cpu_fallback") is True
+                entry.fallback_reason = _optional_text(record.get("fallback_reason"))
             elif event == "rtsp_worker_started":
                 entry.status = AnalysisWorkerStatus.STARTING
                 entry.last_message = "waiting for RTSP stream"
@@ -619,6 +640,10 @@ class AnalysisSupervisor:
                 "CCTV_APP_ENV": self.settings.app_env,
                 "CCTV_APP_MODE": self.settings.app_mode.value,
                 "CCTV_AI_DEVICE": self.settings.ai_device.value,
+                "CCTV_AI_ALLOW_CPU_FALLBACK": str(
+                    self.settings.ai_allow_cpu_fallback
+                ).lower(),
+                "CCTV_AI_CUDA_DEVICE_ID": str(self.settings.ai_cuda_device_id),
                 "CCTV_ANALYSIS_FPS": str(self.settings.analysis_fps),
                 "CCTV_ANALYSIS_SUPERVISOR_ENABLED": "false",
                 "CCTV_DATABASE_PATH": str(self.settings.database_path),
@@ -676,6 +701,12 @@ class AnalysisSupervisor:
             environment.pop("CCTV_MODEL_CLASSES_PATH", None)
         else:
             environment["CCTV_MODEL_CLASSES_PATH"] = str(self.settings.model_classes_path)
+        if self.settings.ai_cuda_gpu_mem_limit_mb is None:
+            environment.pop("CCTV_AI_CUDA_GPU_MEM_LIMIT_MB", None)
+        else:
+            environment["CCTV_AI_CUDA_GPU_MEM_LIMIT_MB"] = str(
+                self.settings.ai_cuda_gpu_mem_limit_mb
+            )
         return environment
 
     def _restart_delay(self, restart_count: int) -> float:
@@ -708,6 +739,11 @@ class AnalysisSupervisor:
             next_restart_at=entry.next_restart_at,
             last_error_type=entry.last_error_type,
             last_message=entry.last_message,
+            requested_device=entry.requested_device,
+            effective_device=entry.effective_device,
+            execution_provider=entry.execution_provider,
+            cpu_fallback=entry.cpu_fallback,
+            fallback_reason=entry.fallback_reason,
         )
 
 

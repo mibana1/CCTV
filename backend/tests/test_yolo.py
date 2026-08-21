@@ -89,6 +89,9 @@ def test_cpu_yolo_decodes_v8_output_with_class_aware_nms(
     assert detector.summary.detector_type == "yolo_onnx"
     assert detector.summary.total_detections == 2
     assert detector.summary.device == "cpu"
+    assert detector.summary.requested_device == "cpu"
+    assert detector.summary.execution_provider == "OpenCVDNNCPU"
+    assert detector.summary.cpu_fallback is False
     assert detector.summary.model_name == "model.onnx"
     assert len(detector.summary.model_sha256) == 64
 

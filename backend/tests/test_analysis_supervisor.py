@@ -135,6 +135,10 @@ def test_supervisor_starts_reloads_and_stops_one_worker_per_camera(
     assert not any("rtsp://" in argument for argument in first[0])
     assert first[1]["CCTV_RTSP_WORKER_URL"] == "rtsp://mediamtx:8554/lobby/camera"
     assert first[1]["CCTV_APP_MODE"] == "live"
+    assert first[1]["CCTV_AI_DEVICE"] == "cpu"
+    assert first[1]["CCTV_AI_ALLOW_CPU_FALLBACK"] == "false"
+    assert first[1]["CCTV_AI_CUDA_DEVICE_ID"] == "0"
+    assert "CCTV_AI_CUDA_GPU_MEM_LIMIT_MB" not in first[1]
     assert first[1]["CCTV_HIPERWALL_EXECUTOR_ENABLED"] == "false"
     assert "HIPERWALL_TOKEN" not in first[1]
 
@@ -296,6 +300,7 @@ def test_analysis_worker_status_api_reports_disabled_and_running_states(tmp_path
     assert listed.status_code == 200
     assert listed.json()["active_workers"] == 1
     assert listed.json()["items"][0]["status"] == "running"
+    assert listed.json()["items"][0]["cpu_fallback"] is False
     assert detail.status_code == 200
     assert detail.json()["analysis_run_id"] == "run-1"
 
@@ -308,6 +313,16 @@ def test_worker_output_updates_progress_and_reconnect_state(tmp_path: Path) -> N
     camera = cameras.create_camera(name="Lobby", stream_path="camera")
     _create_color_rule(rules, camera.stream_path, "Rule")
     records = (
+        json.dumps(
+            {
+                "event": "detector_runtime_resolved",
+                "requested_device": "cuda",
+                "effective_device": "cpu",
+                "execution_provider": "OpenCVDNNCPU",
+                "cpu_fallback": True,
+                "fallback_reason": "CUDAExecutionProvider is unavailable",
+            }
+        ),
         json.dumps({"event": "analysis_run_created", "analysis_run_id": "run-1"}),
         json.dumps({"event": "rtsp_source_connected", "connection_count": 1}),
         json.dumps({"event": "rtsp_worker_progress", "processed_samples": 5}),
@@ -336,6 +351,11 @@ def test_worker_output_updates_progress_and_reconnect_state(tmp_path: Path) -> N
         sleep(0.01)
 
     assert snapshot.analysis_run_id == "run-1"
+    assert snapshot.requested_device == "cuda"
+    assert snapshot.effective_device == "cpu"
+    assert snapshot.execution_provider == "OpenCVDNNCPU"
+    assert snapshot.cpu_fallback is True
+    assert snapshot.fallback_reason == "CUDAExecutionProvider is unavailable"
     assert snapshot.processed_samples == 5
     assert snapshot.status is AnalysisWorkerStatus.RECONNECTING
     assert snapshot.last_frame_at is not None

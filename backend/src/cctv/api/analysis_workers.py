@@ -31,6 +31,11 @@ class AnalysisWorkerResponse(BaseModel):
     next_restart_at: datetime | None
     last_error_type: str | None
     last_message: str | None
+    requested_device: str | None = None
+    effective_device: str | None = None
+    execution_provider: str | None = None
+    cpu_fallback: bool = False
+    fallback_reason: str | None = None
 
 
 class AnalysisWorkerListResponse(BaseModel):

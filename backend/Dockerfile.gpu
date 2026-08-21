@@ -1,0 +1,30 @@
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
+
+ARG DEBIAN_FRONTEND=noninteractive
+ARG ONNXRUNTIME_GPU_VERSION=1.26.0
+
+ENV UV_PYTHON_DOWNLOADS=never
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libglib2.0-0 \
+        libgomp1 \
+        python3.12 \
+        python3.12-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:python3.12-bookworm-slim /usr/local/bin/uv /usr/local/bin/uv
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock README.md ./
+COPY src ./src
+
+RUN uv sync --frozen --no-dev \
+    && uv pip install --python /app/.venv/bin/python \
+        "onnxruntime-gpu==${ONNXRUNTIME_GPU_VERSION}"
+
+EXPOSE 8000
+
+CMD ["uv", "run", "--no-sync", "uvicorn", "cctv.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]

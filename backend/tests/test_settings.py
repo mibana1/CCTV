@@ -20,6 +20,9 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_APP_ENV", "test")
     monkeypatch.setenv("CCTV_APP_MODE", "LIVE")
     monkeypatch.setenv("CCTV_AI_DEVICE", "CUDA")
+    monkeypatch.setenv("CCTV_AI_ALLOW_CPU_FALLBACK", "true")
+    monkeypatch.setenv("CCTV_AI_CUDA_DEVICE_ID", "2")
+    monkeypatch.setenv("CCTV_AI_CUDA_GPU_MEM_LIMIT_MB", "4096")
     monkeypatch.setenv("CCTV_ANALYSIS_FPS", "5")
     monkeypatch.setenv("CCTV_DETECTOR_ENABLED", "true")
     monkeypatch.setenv("CCTV_DETECTOR_TYPE", "CUSTOM_DETECTOR")
@@ -84,6 +87,14 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.app_env == "test"
     assert settings.app_mode is AppMode.LIVE
     assert settings.ai_device is AiDevice.CUDA
+    assert settings.ai_allow_cpu_fallback is True
+    assert settings.ai_cuda_device_id == 2
+    assert settings.ai_cuda_gpu_mem_limit_mb == 4096
+    assert settings.detector_runtime_options == {
+        "allow_cpu_fallback": True,
+        "cuda_device_id": 2,
+        "cuda_gpu_mem_limit_mb": 4096,
+    }
     assert settings.analysis_fps == 5
     assert settings.detector_enabled is True
     assert settings.detector_type == "custom_detector"
@@ -160,6 +171,13 @@ def test_settings_load_explicit_env_file(tmp_path: Path) -> None:
     assert settings.database_path == database_path
 
 
+def test_empty_cuda_memory_limit_is_treated_as_unset() -> None:
+    settings = Settings(_env_file=None, ai_cuda_gpu_mem_limit_mb="")
+
+    assert settings.ai_cuda_gpu_mem_limit_mb is None
+    assert "cuda_gpu_mem_limit_mb" not in settings.detector_runtime_options
+
+
 def test_settings_reject_invalid_log_level() -> None:
     with pytest.raises(ValidationError, match="log level must be"):
         Settings(_env_file=None, log_level="verbose")
@@ -184,6 +202,9 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     for variable in (
         "CCTV_APP_MODE",
         "CCTV_AI_DEVICE",
+        "CCTV_AI_ALLOW_CPU_FALLBACK",
+        "CCTV_AI_CUDA_DEVICE_ID",
+        "CCTV_AI_CUDA_GPU_MEM_LIMIT_MB",
         "CCTV_ANALYSIS_FPS",
         "CCTV_DETECTOR_ENABLED",
         "CCTV_DETECTOR_TYPE",
@@ -208,6 +229,13 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
 
     assert settings.app_mode is AppMode.DRY_RUN
     assert settings.ai_device is AiDevice.CPU
+    assert settings.ai_allow_cpu_fallback is False
+    assert settings.ai_cuda_device_id == 0
+    assert settings.ai_cuda_gpu_mem_limit_mb is None
+    assert settings.detector_runtime_options == {
+        "allow_cpu_fallback": False,
+        "cuda_device_id": 0,
+    }
     assert settings.analysis_fps == 2
     assert settings.detector_enabled is False
     assert settings.detector_type == "yolo_onnx"
@@ -243,6 +271,8 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     [
         ("app_mode", "staging"),
         ("ai_device", "gpu"),
+        ("ai_cuda_device_id", -1),
+        ("ai_cuda_gpu_mem_limit_mb", 255),
         ("analysis_fps", 0),
         ("analysis_fps", 31),
         ("detector_type", "invalid detector"),

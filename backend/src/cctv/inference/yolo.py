@@ -172,6 +172,9 @@ class CpuYoloDetector:
         input_size: int = 640,
         confidence_threshold: float = 0.25,
         nms_threshold: float = 0.45,
+        requested_device: str = "cpu",
+        cpu_fallback: bool = False,
+        fallback_reason: str | None = None,
     ) -> None:
         if input_size < 32:
             raise ValueError("input_size must be at least 32 pixels")
@@ -205,6 +208,10 @@ class CpuYoloDetector:
         self.input_size = input_size
         self.confidence_threshold = float(confidence_threshold)
         self.nms_threshold = float(nms_threshold)
+        self.requested_device = requested_device
+        self.execution_provider = "OpenCVDNNCPU"
+        self.cpu_fallback = cpu_fallback
+        self.fallback_reason = fallback_reason
         self._network = network
         self._processed_frames = 0
         self._total_detections = 0
@@ -217,6 +224,10 @@ class CpuYoloDetector:
                 "model_path": self.model_path,
                 "model_sha256": self.model_sha256,
                 "device": "cpu",
+                "requested_device": self.requested_device,
+                "execution_provider": self.execution_provider,
+                "cpu_fallback": self.cpu_fallback,
+                "fallback_reason": self.fallback_reason,
                 "input_size": self.input_size,
                 "class_count": len(self.class_names),
                 "confidence_threshold": self.confidence_threshold,
@@ -236,6 +247,10 @@ class CpuYoloDetector:
             input_size=self.input_size,
             confidence_threshold=self.confidence_threshold,
             nms_threshold=self.nms_threshold,
+            requested_device=self.requested_device,
+            execution_provider=self.execution_provider,
+            cpu_fallback=self.cpu_fallback,
+            fallback_reason=self.fallback_reason,
         )
 
     @property
@@ -260,6 +275,10 @@ class CpuYoloDetector:
             total_detections=self._total_detections,
             total_inference_seconds=round(self._total_inference_seconds, 6),
             average_inference_seconds=round(average, 6),
+            requested_device=metadata.requested_device,
+            execution_provider=metadata.execution_provider,
+            cpu_fallback=metadata.cpu_fallback,
+            fallback_reason=metadata.fallback_reason,
         )
 
     def __call__(self, frame: DecodedFrame) -> None:

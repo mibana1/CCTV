@@ -56,8 +56,42 @@ Hiperwall 같은 외부 시스템의 실제 변경 작업은 차단합니다. �
 
 `CCTV_APP_MODE=live`는 `HIPERWALL_BASE_URL`이 있어야 하며, 인증 모드가
 `token`이면 비어 있지 않은 `HIPERWALL_TOKEN`도 필요합니다. 조건이 맞지
-않으면 설정 검증 단계에서 애플리케이션 시작이 실패합니다. CUDA 장치의 실제
-사용 가능 여부는 추론 Worker 구현 단계에서 별도로 검사합니다.
+않으면 설정 검증 단계에서 애플리케이션 시작이 실패합니다.
+
+### CUDA 추론 준비와 CPU fallback 정책
+
+기본 CPU Compose와 OpenCV DNN 경로는 그대로 유지합니다. NVIDIA GPU 호스트에서는
+별도 overlay를 사용해야 하며, 이 overlay는 CUDA 12.8/cuDNN runtime과
+`onnxruntime-gpu==1.26.0`을 포함한 이미지를 빌드하고 Backend 컨테이너에 GPU 1개를
+예약합니다.
+
+```bash
+docker compose -f compose.yaml -f compose.gpu.yaml up -d --build backend
+```
+
+`CCTV_AI_DEVICE=cuda`이면 `CUDAExecutionProvider`가 실제로 사용 가능한지 확인한 뒤
+ONNX Runtime 세션을 만듭니다. 세션에는 `session.disable_cpu_ep_fallback=1`을 적용해
+지원되지 않는 연산이 조용히 CPU로 실행되는 것을 차단합니다. CUDA Provider 또는
+필수 라이브러리가 없으면 기본값은 Worker 시작 실패입니다.
+
+개발·장애 대응 중 성능 저하를 감수하고 CPU 실행을 허용해야 할 때만 다음 값을
+사용합니다.
+
+```dotenv
+CCTV_AI_ALLOW_CPU_FALLBACK=true
+```
+
+이 fallback은 기존 OpenCV CPU detector로 명시적으로 전환되며 `/analysis-workers`의
+`requested_device`, `effective_device`, `execution_provider`, `cpu_fallback`,
+`fallback_reason`과 구조화 로그에 남습니다. GPU 운영에서는 fallback을 `false`로
+유지하고 `effective_device=cuda`, `execution_provider=CUDAExecutionProvider`,
+`cpu_fallback=false`를 확인합니다.
+
+선택 설정 `CCTV_AI_CUDA_DEVICE_ID`는 컨테이너에 보이는 GPU 인덱스이며,
+`CCTV_AI_CUDA_GPU_MEM_LIMIT_MB`는 카메라별 프로세스의 ONNX Runtime CUDA arena
+상한입니다. arena 상한은 카메라별 모델·CUDA 컨텍스트 중복 적재 자체를 해결하지
+않습니다. 실제 GPU에서 Worker 1개와 2개 이상을 순차 기동해 VRAM 증가량을 측정한
+뒤, 필요하면 GPU 추론을 중앙 프로세스로 모으는 구조를 검토해야 합니다.
 
 ### 규칙 이벤트 → Hiperwall DRY RUN/LIVE
 

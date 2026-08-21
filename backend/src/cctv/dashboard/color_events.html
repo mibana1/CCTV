@@ -257,7 +257,9 @@
         if (!worker) return { className: "analysis-failed", text: "상시 분석 대기 · 활성 규칙 적용 확인 필요" };
         const labels = { starting: "시작 중", running: "실행 중", reconnecting: "재연결 중", stopping: "정지 중", failed: "실패", stopped: "정지" };
         const className = worker.status === "running" ? "analysis-running" : worker.status === "reconnecting" || worker.status === "starting" ? "analysis-reconnecting" : "analysis-failed";
-        return { className, text: `상시 분석 ${labels[worker.status] || worker.status} · 규칙 ${worker.rule_count}개 · 마지막 프레임 ${relativeTime(worker.last_frame_at)} · 마지막 이벤트 ${relativeTime(worker.last_event_at)}` };
+        const provider = worker.execution_provider ? ` · 추론 ${worker.effective_device || "확인 중"}/${worker.execution_provider}` : " · 추론 확인 중";
+        const fallback = worker.cpu_fallback ? ` · CPU fallback${worker.fallback_reason ? ` (${worker.fallback_reason})` : ""}` : "";
+        return { className, text: `상시 분석 ${labels[worker.status] || worker.status} · 규칙 ${worker.rule_count}개${provider}${fallback} · 마지막 프레임 ${relativeTime(worker.last_frame_at)} · 마지막 이벤트 ${relativeTime(worker.last_event_at)}` };
       }
 
       async function loadAnalysisWorkers() {
