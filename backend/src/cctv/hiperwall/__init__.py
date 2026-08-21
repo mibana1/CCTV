@@ -9,6 +9,10 @@ from cctv.hiperwall.mapping import (
     validate_rule_hiperwall_mapping,
 )
 from cctv.hiperwall.models import DisplayAction
+from cctv.hiperwall.reconciliation import (
+    HiperwallReconciler,
+    HiperwallReconciliationResult,
+)
 
 __all__ = [
     "DisplayAction",
@@ -18,6 +22,8 @@ __all__ = [
     "HiperwallLivePlanner",
     "HiperwallMapping",
     "HiperwallMappingError",
+    "HiperwallReconciler",
+    "HiperwallReconciliationResult",
     "HiperwallRequestError",
     "validate_rule_hiperwall_mapping",
 ]

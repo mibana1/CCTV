@@ -101,6 +101,12 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("HIPERWALL_USER", "cctv_bridge")
     monkeypatch.setenv("HIPERWALL_TOKEN", "test-token")
     monkeypatch.setenv("HIPERWALL_BASE_URL", "http://hiperwall-host:8000")
+    monkeypatch.setenv("HIPERWALL_RECONCILIATION_ENABLED", "true")
+    monkeypatch.setenv("HIPERWALL_RECONCILIATION_INTERVAL_SECONDS", "45")
+    monkeypatch.setenv("HIPERWALL_RECONCILIATION_GRACE_SECONDS", "20")
+    monkeypatch.setenv("HIPERWALL_RECONCILIATION_LEASE_SECONDS", "180")
+    monkeypatch.setenv("HIPERWALL_RECONCILIATION_FORCE_CLOSE_ENABLED", "false")
+    monkeypatch.setenv("HIPERWALL_RECONCILIATION_MAX_FORCE_CLOSES_PER_RUN", "25")
 
     settings = Settings(_env_file=None)
 
@@ -194,6 +200,12 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.hiperwall_user == "cctv_bridge"
     assert settings.hiperwall_token is not None
     assert settings.hiperwall_token.get_secret_value() == "test-token"
+    assert settings.hiperwall_reconciliation_enabled is True
+    assert settings.hiperwall_reconciliation_interval_seconds == 45
+    assert settings.hiperwall_reconciliation_grace_seconds == 20
+    assert settings.hiperwall_reconciliation_lease_seconds == 180
+    assert settings.hiperwall_reconciliation_force_close_enabled is False
+    assert settings.hiperwall_reconciliation_max_force_closes_per_run == 25
 
 
 def test_settings_load_explicit_env_file(tmp_path: Path) -> None:

@@ -80,6 +80,20 @@ class DisplayStateRepository:
         with closing(connect_database(self.database_path)) as connection, connection:
             return release_expired_display_states(connection, now=now)
 
+    def list_managed(self, *, now: datetime | None = None) -> tuple[DisplayStateRecord, ...]:
+        """Return non-idle rows that still identify an application-owned instance."""
+        with closing(connect_database(self.database_path)) as connection, connection:
+            release_expired_display_states(connection, now=now)
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM hiperwall_display_states
+                WHERE state <> 'IDLE' AND instance_id IS NOT NULL
+                ORDER BY updated_at, rule_id, source_name
+                """
+            ).fetchall()
+        return tuple(_record_from_row(row) for row in rows)
+
 
 def gate_live_display_events(
     connection: sqlite3.Connection,
@@ -235,6 +249,38 @@ def release_failed_open_state(
         WHERE open_action_id = ? AND state = 'DISPLAYING'
         """,
         (failed_text, action_id),
+    )
+
+
+def release_reconciled_open_state(
+    connection: sqlite3.Connection,
+    *,
+    action_id: str,
+    reconciled_at: datetime,
+) -> None:
+    """Release an uncertain open after inventory proves no instance remains."""
+    reconciled_text = _utc_text(reconciled_at)
+    connection.execute(
+        """
+        UPDATE hiperwall_display_states
+        SET state = 'IDLE',
+            last_rule_event_id = active_rule_event_id,
+            last_open_action_id = open_action_id,
+            last_close_action_id = close_action_id,
+            last_closed_at = ?,
+            active_rule_event_id = NULL,
+            open_action_id = NULL,
+            close_action_id = NULL,
+            instance_id = NULL,
+            cooldown_seconds = 0,
+            displaying_since = NULL,
+            opened_at = NULL,
+            close_succeeded_at = NULL,
+            cooldown_until = NULL,
+            updated_at = ?
+        WHERE open_action_id = ? AND state = 'DISPLAYING'
+        """,
+        (reconciled_text, reconciled_text, action_id),
     )
 
 
@@ -403,4 +449,5 @@ __all__ = [
     "record_display_action_success",
     "release_expired_display_states",
     "release_failed_open_state",
+    "release_reconciled_open_state",
 ]

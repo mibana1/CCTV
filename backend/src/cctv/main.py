@@ -58,6 +58,12 @@ def create_app(
                 "analysis_supervisor_enabled": (application_settings.analysis_supervisor_enabled),
                 "retention_enabled": application_settings.retention_enabled,
                 "retention_dry_run": application_settings.retention_dry_run,
+                "hiperwall_reconciliation_enabled": (
+                    application_settings.hiperwall_reconciliation_enabled
+                ),
+                "hiperwall_reconciliation_force_close_enabled": (
+                    application_settings.hiperwall_reconciliation_force_close_enabled
+                ),
             },
         )
         try:

@@ -9,6 +9,7 @@ import threading
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 from math import isfinite
+from time import monotonic
 
 from cctv.core.execution import external_action_allowed
 from cctv.core.settings import AppMode, Settings
@@ -16,6 +17,7 @@ from cctv.db.display_actions import DisplayActionRecord, DisplayActionRepository
 from cctv.hiperwall.client import HiperwallClient, HiperwallRequestError
 from cctv.hiperwall.mapping import HiperwallMapping, mapping_from_rule
 from cctv.hiperwall.models import DisplayAction
+from cctv.hiperwall.reconciliation import HiperwallReconciler
 from cctv.rules import RuleDefinition, RuleEvent
 
 logger = logging.getLogger(__name__)
@@ -118,6 +120,11 @@ class HiperwallActionWorker:
             token=token,
             timeout_seconds=settings.hiperwall_timeout_seconds,
         )
+        self.reconciler = (
+            HiperwallReconciler(settings, client=self.client)
+            if settings.hiperwall_reconciliation_enabled
+            else None
+        )
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._thread: threading.Thread | None = None
@@ -125,7 +132,9 @@ class HiperwallActionWorker:
     def start(self) -> None:
         if self._thread is not None:
             return
-        recovered = self.repository.recover_interrupted()
+        recovered = self.repository.recover_interrupted(
+            hold_for_reconciliation=self.reconciler is not None
+        )
         self._thread = threading.Thread(
             target=self._run,
             name="hiperwall-action-worker",
@@ -137,6 +146,17 @@ class HiperwallActionWorker:
             extra={
                 "event": "hiperwall_action_worker_started",
                 "recovered_action_count": recovered,
+                "reconciliation_enabled": self.reconciler is not None,
+                "reconciliation_interval_seconds": (
+                    self.settings.hiperwall_reconciliation_interval_seconds
+                    if self.reconciler is not None
+                    else None
+                ),
+                "reconciliation_force_close_enabled": (
+                    self.settings.hiperwall_reconciliation_force_close_enabled
+                    if self.reconciler is not None
+                    else None
+                ),
             },
         )
 
@@ -155,7 +175,9 @@ class HiperwallActionWorker:
         )
 
     def process_once(self) -> bool:
-        action = self.repository.claim_next()
+        action = self.repository.claim_next(
+            allow_uncertain_outcomes=self.reconciler is None
+        )
         if action is None:
             return False
         try:
@@ -224,7 +246,19 @@ class HiperwallActionWorker:
         )
 
     def _run(self) -> None:
+        next_reconciliation_at = monotonic()
         while not self._stop.is_set():
+            if self.reconciler is not None and monotonic() >= next_reconciliation_at:
+                next_reconciliation_at = (
+                    monotonic() + self.settings.hiperwall_reconciliation_interval_seconds
+                )
+                try:
+                    self.reconciler.run_once()
+                except Exception:
+                    logger.exception(
+                        "Hiperwall action worker reconciliation failed",
+                        extra={"event": "hiperwall_action_worker_reconciliation_failed"},
+                    )
             try:
                 processed = 0
                 while not self._stop.is_set() and processed < 100 and self.process_once():
@@ -235,7 +269,9 @@ class HiperwallActionWorker:
                     extra={"event": "hiperwall_action_worker_poll_failed"},
                 )
                 try:
-                    self.repository.recover_interrupted()
+                    self.repository.recover_interrupted(
+                        hold_for_reconciliation=self.reconciler is not None
+                    )
                 except Exception:
                     logger.exception(
                         "Hiperwall action recovery failed",

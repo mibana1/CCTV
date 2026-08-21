@@ -18,6 +18,9 @@ if TYPE_CHECKING:
     from cctv.hiperwall import DisplayAction
 
 
+INTERRUPTED_UNKNOWN_OUTCOME = "hiperwall_interrupted_unknown_outcome"
+
+
 @dataclass(frozen=True, slots=True)
 class DisplayActionRecord:
     """One action joined with its rule-event and analysis context."""
@@ -111,23 +114,67 @@ class DisplayActionRepository:
             total=total,
         )
 
-    def recover_interrupted(self) -> int:
+    def list_for_reconciliation(
+        self,
+        *,
+        instance_prefix: str = "cctv-",
+    ) -> tuple[DisplayActionRecord, ...]:
+        """Return LIVE actions whose instance IDs are owned by this application."""
+        prefix = _required_text(instance_prefix, "instance_prefix")
+        with closing(connect_database(self.database_path)) as connection:
+            rows = connection.execute(
+                f"""
+                {_SELECT_ACTIONS}
+                WHERE action.mode = 'live'
+                    AND json_type(action.request_json, '$.instance_id') = 'text'
+                    AND json_extract(action.request_json, '$.instance_id') LIKE ?
+                ORDER BY action.rowid
+                """,
+                (f"{prefix}%",),
+            ).fetchall()
+        return tuple(_record_from_row(row) for row in rows)
+
+    def recover_interrupted(self, *, hold_for_reconciliation: bool = False) -> int:
         """Return actions abandoned during process termination to the retry queue."""
         now = _utc_text()
+        error_code = INTERRUPTED_UNKNOWN_OUTCOME if hold_for_reconciliation else None
+        error_message = (
+            "Process stopped while the external Hiperwall outcome was unknown"
+            if hold_for_reconciliation
+            else None
+        )
         with closing(connect_database(self.database_path)) as connection, connection:
             cursor = connection.execute(
                 """
                 UPDATE display_actions
-                SET status = 'retry', available_at = ?, updated_at = ?
+                SET status = 'retry', available_at = ?,
+                    last_error_code = COALESCE(?, last_error_code),
+                    last_error_message = COALESCE(?, last_error_message),
+                    updated_at = ?
                 WHERE mode = 'live' AND status = 'processing'
                 """,
-                (now, now),
+                (now, error_code, error_message, now),
             )
         return cursor.rowcount
 
-    def claim_next(self, *, now: datetime | None = None) -> DisplayActionRecord | None:
+    def claim_next(
+        self,
+        *,
+        now: datetime | None = None,
+        allow_uncertain_outcomes: bool = True,
+    ) -> DisplayActionRecord | None:
         """Atomically lease the oldest due LIVE action to one worker."""
         claimed_at = _utc_text(now)
+        uncertain_clause = (
+            ""
+            if allow_uncertain_outcomes
+            else "AND COALESCE(last_error_code, '') <> ?"
+        )
+        parameters: tuple[object, ...] = (
+            (claimed_at,)
+            if allow_uncertain_outcomes
+            else (claimed_at, INTERRUPTED_UNKNOWN_OUTCOME)
+        )
         with closing(connect_database(self.database_path)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -135,16 +182,17 @@ class DisplayActionRepository:
 
                 release_expired_display_states(connection, now=now)
                 row = connection.execute(
-                    """
+                    f"""
                     SELECT id
                     FROM display_actions
                     WHERE mode = 'live'
                         AND status IN ('pending', 'retry')
                         AND available_at <= ?
+                        {uncertain_clause}
                     ORDER BY available_at, created_at, id
                     LIMIT 1
                     """,
-                    (claimed_at,),
+                    parameters,
                 ).fetchone()
                 if row is None:
                     connection.commit()
@@ -173,6 +221,111 @@ class DisplayActionRepository:
                 connection.rollback()
                 raise
         return _record_from_row(claimed) if claimed is not None else None
+
+    def reconcile_succeeded(
+        self,
+        action_id: str,
+        *,
+        result: dict[str, Any],
+        followup_action: DisplayAction | None = None,
+        completed_at: datetime | None = None,
+    ) -> str | None:
+        """Atomically adopt an observed outcome and repair the display lifecycle."""
+        from cctv.db.display_states import record_display_action_success
+
+        completed_value = completed_at or datetime.now(UTC)
+        completed_text = _utc_text(completed_value)
+        with closing(connect_database(self.database_path)) as connection, connection:
+            row = connection.execute(
+                """
+                SELECT rule_event_id, action_type, mode
+                FROM display_actions
+                WHERE id = ?
+                """,
+                (action_id,),
+            ).fetchone()
+            if row is None or str(row["mode"]) != "live":
+                raise RuntimeError("Hiperwall LIVE action does not exist")
+            connection.execute(
+                """
+                UPDATE display_actions
+                SET status = 'succeeded', result_json = ?, completed_at = ?,
+                    last_error_code = NULL, last_error_message = NULL, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    _json_object(result, "display action result"),
+                    completed_text,
+                    completed_text,
+                    action_id,
+                ),
+            )
+
+            followup_action_id: str | None = None
+            if followup_action is not None:
+                existing = connection.execute(
+                    """
+                    SELECT id
+                    FROM display_actions
+                    WHERE rule_event_id = ? AND action_type = 'restore_layout'
+                    ORDER BY created_at, id
+                    LIMIT 1
+                    """,
+                    (str(row["rule_event_id"]),),
+                ).fetchone()
+                if existing is None:
+                    insert_display_actions(connection, actions=(followup_action,))
+                    followup_action_id = followup_action.id
+                else:
+                    followup_action_id = str(existing["id"])
+
+            record_display_action_success(
+                connection,
+                action_id=action_id,
+                followup_action_id=followup_action_id,
+                completed_at=completed_value,
+            )
+        return followup_action_id
+
+    def reconcile_missing_open(
+        self,
+        action_id: str,
+        *,
+        reconciled_at: datetime | None = None,
+    ) -> None:
+        """Fail an uncertain open and release its gate when inventory proves it absent."""
+        from cctv.db.display_states import release_reconciled_open_state
+
+        reconciled_value = reconciled_at or datetime.now(UTC)
+        reconciled_text = _utc_text(reconciled_value)
+        with closing(connect_database(self.database_path)) as connection, connection:
+            row = connection.execute(
+                "SELECT action_type, mode FROM display_actions WHERE id = ?",
+                (action_id,),
+            ).fetchone()
+            if (
+                row is None
+                or str(row["mode"]) != "live"
+                or str(row["action_type"]) != "open_source"
+            ):
+                raise RuntimeError("Hiperwall LIVE open action does not exist")
+            connection.execute(
+                """
+                UPDATE display_actions
+                SET status = 'failed', completed_at = ?,
+                    last_error_code = 'hiperwall_reconciled_instance_missing',
+                    last_error_message =
+                        'Reconciliation found no external instance after an uncertain open',
+                    updated_at = ?
+                WHERE id = ? AND status IN ('pending', 'processing', 'retry', 'failed')
+                """,
+                (reconciled_text, reconciled_text, action_id),
+            )
+            release_reconciled_open_state(
+                connection,
+                action_id=action_id,
+                reconciled_at=reconciled_value,
+            )
 
     def mark_succeeded(
         self,
@@ -402,6 +555,7 @@ def _validate_pagination(page: int, limit: int) -> None:
 
 
 __all__ = [
+    "INTERRUPTED_UNKNOWN_OUTCOME",
     "DisplayActionPage",
     "DisplayActionRecord",
     "DisplayActionRepository",

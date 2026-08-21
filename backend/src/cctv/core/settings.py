@@ -226,6 +226,38 @@ class Settings(BaseSettings):
         le=86_400,
         validation_alias="HIPERWALL_DEFAULT_DISPLAY_SECONDS",
     )
+    hiperwall_reconciliation_enabled: bool = Field(
+        default=True,
+        validation_alias="HIPERWALL_RECONCILIATION_ENABLED",
+    )
+    hiperwall_reconciliation_interval_seconds: float = Field(
+        default=30.0,
+        ge=5,
+        le=3_600,
+        validation_alias="HIPERWALL_RECONCILIATION_INTERVAL_SECONDS",
+    )
+    hiperwall_reconciliation_grace_seconds: float = Field(
+        default=15.0,
+        ge=0,
+        le=600,
+        validation_alias="HIPERWALL_RECONCILIATION_GRACE_SECONDS",
+    )
+    hiperwall_reconciliation_lease_seconds: float = Field(
+        default=300.0,
+        ge=30,
+        le=3_600,
+        validation_alias="HIPERWALL_RECONCILIATION_LEASE_SECONDS",
+    )
+    hiperwall_reconciliation_force_close_enabled: bool = Field(
+        default=True,
+        validation_alias="HIPERWALL_RECONCILIATION_FORCE_CLOSE_ENABLED",
+    )
+    hiperwall_reconciliation_max_force_closes_per_run: int = Field(
+        default=100,
+        ge=1,
+        le=10_000,
+        validation_alias="HIPERWALL_RECONCILIATION_MAX_FORCE_CLOSES_PER_RUN",
+    )
 
     @field_validator("log_level")
     @classmethod

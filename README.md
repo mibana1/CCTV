@@ -199,6 +199,29 @@ LIVE `open_source` 직전에는 최신 Hiperwall 목록으로 저장된 콘텐�
 거부되면 `hiperwall_command_forbidden`으로 기록합니다. 실패 로그에는 안전한 오류
 메시지와 재시도 여부가 함께 남습니다.
 
+Backend Hiperwall Worker는 기본 30초마다 HiperInterface의 열린 인스턴스와
+`display_actions`·`hiperwall_display_states`를 대조합니다. 외부 open 성공 직후
+프로세스가 종료된 경우 실제 open을 성공으로 채택하고 원래 `display_seconds`를
+기준으로 누락된 close 작업을 복원합니다. close가 최종 실패했거나 DB상 완료됐지만
+외부 인스턴스가 계속 열려 있으면 경고를 기록하고 같은 인스턴스 ID로 강제 close한
+뒤 작업과 표시 상태를 한 트랜잭션에서 정리합니다. 여러 Backend가 동시에 대조하지
+않도록 SQLite maintenance lease를 사용합니다.
+
+강제 close 대상은 이 서비스가 생성하는 `cctv-` 접두사 인스턴스로 제한되므로
+운영자가 Hiperwall에서 직접 연 콘텐츠는 닫지 않습니다. 다음 설정으로 주기, 장애
+유예 시간, lease, 회당 강제 close 상한을 바꿀 수 있습니다. 강제 close를 잠시
+중단하고 경고만 남기려면 `HIPERWALL_RECONCILIATION_FORCE_CLOSE_ENABLED=false`,
+기능 전체를 중단하려면 `HIPERWALL_RECONCILIATION_ENABLED=false`를 사용합니다.
+
+```dotenv
+HIPERWALL_RECONCILIATION_ENABLED=true
+HIPERWALL_RECONCILIATION_INTERVAL_SECONDS=30
+HIPERWALL_RECONCILIATION_GRACE_SECONDS=15
+HIPERWALL_RECONCILIATION_LEASE_SECONDS=300
+HIPERWALL_RECONCILIATION_FORCE_CLOSE_ENABLED=true
+HIPERWALL_RECONCILIATION_MAX_FORCE_CLOSES_PER_RUN=100
+```
+
 ```bash
 curl "http://127.0.0.1:18000/hiperwall-actions?status=succeeded"
 curl "http://127.0.0.1:18000/hiperwall-actions?status=failed"
