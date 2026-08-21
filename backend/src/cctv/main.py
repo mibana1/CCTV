@@ -21,6 +21,7 @@ from cctv.core.settings import AppMode, Settings, get_settings
 from cctv.dashboard import TestSessionManager
 from cctv.db import CameraRepository, initialize_database
 from cctv.hiperwall import HiperwallActionWorker, HiperwallClient
+from cctv.workers import AnalysisSupervisor
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ def create_app(
     test_session_manager: TestSessionManager | None = None,
     camera_manager: CameraManager | None = None,
     hiperwall_client: HiperwallClient | None = None,
+    analysis_supervisor: AnalysisSupervisor | None = None,
 ) -> FastAPI:
     """Build an application with validated settings and database startup."""
     application_settings = settings or get_settings()
@@ -52,6 +54,7 @@ def create_app(
                 "analysis_fps": application_settings.analysis_fps,
                 "detector_enabled": application_settings.object_detection_enabled,
                 "detector_type": application_settings.detector_type,
+                "analysis_supervisor_enabled": (application_settings.analysis_supervisor_enabled),
             },
         )
         try:
@@ -70,12 +73,13 @@ def create_app(
         application.state.settings = application_settings
         application.state.database = database_state
         application.state.hiperwall_client = hiperwall_client
-        application.state.test_session_manager = (
-            test_session_manager or TestSessionManager(application_settings)
+        application.state.test_session_manager = test_session_manager or TestSessionManager(
+            application_settings
         )
         owned_camera_manager: CameraManagementService | None = None
         camera_reconciler: CameraReconciler | None = None
         hiperwall_worker: HiperwallActionWorker | None = None
+        active_analysis_supervisor = analysis_supervisor
         if (
             application_settings.app_mode is AppMode.LIVE
             and application_settings.hiperwall_executor_enabled
@@ -109,6 +113,11 @@ def create_app(
             camera_reconciler.start()
         else:
             application.state.camera_manager = None
+        if active_analysis_supervisor is None and application_settings.analysis_supervisor_enabled:
+            active_analysis_supervisor = AnalysisSupervisor(application_settings)
+        if active_analysis_supervisor is not None:
+            active_analysis_supervisor.start()
+        application.state.analysis_supervisor = active_analysis_supervisor
         logger.info(
             "Application startup complete",
             extra={
@@ -119,6 +128,8 @@ def create_app(
         try:
             yield
         finally:
+            if active_analysis_supervisor is not None:
+                active_analysis_supervisor.stop()
             if hiperwall_worker is not None:
                 hiperwall_worker.stop()
             if camera_reconciler is not None:

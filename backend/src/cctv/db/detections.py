@@ -151,6 +151,17 @@ class TrackObservationPage:
     total: int
 
 
+@dataclass(frozen=True, slots=True)
+class FramePersistenceResult:
+    """Frame identifier plus events/actions admitted by the LIVE display gate."""
+
+    frame_id: int
+    persisted_rule_event_ids: tuple[str, ...]
+    persisted_display_action_ids: tuple[str, ...]
+    suppressed_rule_event_ids: tuple[str, ...]
+    suppressed_display_action_ids: tuple[str, ...]
+
+
 class DetectionRepository:
     """Persist and query normalized detection results using short transactions."""
 
@@ -250,14 +261,33 @@ class DetectionRepository:
         rule_events: Collection[RuleEvent] = (),
         display_actions: Collection[DisplayAction] = (),
     ) -> int:
+        """Persist one frame and return its identifier."""
+        return self.save_frame_with_outcome(
+            analysis_run_id,
+            result,
+            active_track_ids=active_track_ids,
+            rule_events=rule_events,
+            display_actions=display_actions,
+        ).frame_id
+
+    def save_frame_with_outcome(
+        self,
+        analysis_run_id: str,
+        result: FrameDetections,
+        *,
+        active_track_ids: Collection[int] | None = None,
+        rule_events: Collection[RuleEvent] = (),
+        display_actions: Collection[DisplayAction] = (),
+    ) -> FramePersistenceResult:
         """Atomically persist one frame, detections, events, and display actions."""
         from cctv.db.display_actions import insert_display_actions
+        from cctv.db.display_states import gate_live_display_events
         from cctv.db.rules import insert_rule_events
 
         normalized_active_track_ids = _normalize_active_track_ids(active_track_ids)
         with closing(connect_database(self.database_path)) as connection, connection:
             run = connection.execute(
-                "SELECT status FROM analysis_runs WHERE id = ?",
+                "SELECT status, source_name FROM analysis_runs WHERE id = ?",
                 (analysis_run_id,),
             ).fetchone()
             if run is None:
@@ -325,14 +355,29 @@ class DetectionRepository:
                     analysis_run_id=analysis_run_id,
                     active_track_ids=normalized_active_track_ids,
                 )
+            gate_result = gate_live_display_events(
+                connection,
+                source_name=str(run["source_name"]),
+                events=rule_events,
+                actions=display_actions,
+            )
             insert_rule_events(
                 connection,
                 analysis_run_id=analysis_run_id,
                 analyzed_frame_id=int(frame_id),
-                events=rule_events,
+                events=gate_result.rule_events,
             )
-            insert_display_actions(connection, actions=display_actions)
+            insert_display_actions(connection, actions=gate_result.display_actions)
         persisted_frame_id = int(frame_id)
+        outcome = FramePersistenceResult(
+            frame_id=persisted_frame_id,
+            persisted_rule_event_ids=tuple(event.id for event in gate_result.rule_events),
+            persisted_display_action_ids=tuple(
+                action.id for action in gate_result.display_actions
+            ),
+            suppressed_rule_event_ids=gate_result.suppressed_rule_event_ids,
+            suppressed_display_action_ids=gate_result.suppressed_display_action_ids,
+        )
         logger.debug(
             "Frame detections persisted",
             extra={
@@ -341,11 +386,23 @@ class DetectionRepository:
                 "analyzed_frame_id": persisted_frame_id,
                 "sample_index": result.sample_index,
                 "detection_count": len(result.detections),
-                "rule_event_count": len(rule_events),
-                "display_action_count": len(display_actions),
+                "rule_event_count": len(outcome.persisted_rule_event_ids),
+                "display_action_count": len(outcome.persisted_display_action_ids),
+                "suppressed_rule_event_count": len(outcome.suppressed_rule_event_ids),
             },
         )
-        return persisted_frame_id
+        if outcome.suppressed_rule_event_ids:
+            logger.info(
+                "Rule events suppressed by the active Hiperwall display lifecycle",
+                extra={
+                    "event": "hiperwall_display_events_suppressed",
+                    "analysis_run_id": analysis_run_id,
+                    "source_name": str(run["source_name"]),
+                    "rule_event_ids": outcome.suppressed_rule_event_ids,
+                    "display_action_ids": outcome.suppressed_display_action_ids,
+                },
+            )
+        return outcome
 
     def finish_analysis_run(
         self,

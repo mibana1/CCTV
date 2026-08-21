@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     tracker_class_names: str = "person"
     persist_detections: bool = True
     rules_enabled: bool = True
+    analysis_supervisor_enabled: bool = False
+    analysis_supervisor_reconcile_interval_seconds: float = Field(default=5.0, ge=1, le=300)
+    analysis_supervisor_max_workers: int = Field(default=2, ge=1, le=64)
+    analysis_supervisor_restart_base_seconds: float = Field(default=2.0, gt=0, le=300)
+    analysis_supervisor_restart_max_seconds: float = Field(default=60.0, gt=0, le=3_600)
+    analysis_supervisor_shutdown_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    analysis_supervisor_lease_seconds: float = Field(default=20.0, ge=5, le=3_600)
     hiperwall_dry_run_enabled: bool = True
     hiperwall_executor_enabled: bool = True
     host: str = "127.0.0.1"
@@ -304,9 +311,7 @@ class Settings(BaseSettings):
         raw_names = value.split(",")
         names = tuple(dict.fromkeys(name.strip().casefold() for name in raw_names))
         if not names or any(not name or len(name) > 128 for name in names):
-            raise ValueError(
-                "class names must be a comma-separated list of 1-128 character labels"
-            )
+            raise ValueError("class names must be a comma-separated list of 1-128 character labels")
         if any(any(character in "\r\n\t" for character in name) for name in names):
             raise ValueError("class names must not contain control characters")
         return ",".join(names)
@@ -330,9 +335,24 @@ class Settings(BaseSettings):
                 "CCTV_RTSP_RECONNECT_MAX_SECONDS must be greater than or equal to "
                 "CCTV_RTSP_RECONNECT_INITIAL_SECONDS"
             )
-        unavailable_tracker_classes = (
-            self.tracker_class_name_set - self.detection_class_name_set
-        )
+        if (
+            self.analysis_supervisor_restart_max_seconds
+            < self.analysis_supervisor_restart_base_seconds
+        ):
+            raise ValueError(
+                "CCTV_ANALYSIS_SUPERVISOR_RESTART_MAX_SECONDS must be greater than or equal "
+                "to CCTV_ANALYSIS_SUPERVISOR_RESTART_BASE_SECONDS"
+            )
+        if (
+            self.analysis_supervisor_enabled
+            and self.analysis_supervisor_lease_seconds
+            <= self.analysis_supervisor_reconcile_interval_seconds * 2
+        ):
+            raise ValueError(
+                "CCTV_ANALYSIS_SUPERVISOR_LEASE_SECONDS must be greater than twice "
+                "CCTV_ANALYSIS_SUPERVISOR_RECONCILE_INTERVAL_SECONDS"
+            )
+        unavailable_tracker_classes = self.tracker_class_name_set - self.detection_class_name_set
         if unavailable_tracker_classes:
             formatted = ", ".join(sorted(unavailable_tracker_classes))
             raise ValueError(
@@ -349,9 +369,7 @@ class Settings(BaseSettings):
             raise ValueError("HIPERWALL_AUTH_MODE=crypto is not supported in live mode")
         if self.hiperwall_auth_mode == "token":
             if not self.hiperwall_user:
-                raise ValueError(
-                    "HIPERWALL_USER is required for token authentication in live mode"
-                )
+                raise ValueError("HIPERWALL_USER is required for token authentication in live mode")
             if self.hiperwall_token is None or not self.hiperwall_token.get_secret_value():
                 raise ValueError(
                     "HIPERWALL_TOKEN is required for token authentication in live mode"

@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -21,7 +22,7 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
     second = initialize_database(database_path)
 
     assert database_path.is_file()
-    assert first.schema_version == 17
+    assert first.schema_version == 19
     assert first.applied_migrations == (
         1,
         2,
@@ -40,8 +41,10 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
         15,
         16,
         17,
+        18,
+        19,
     )
-    assert second.schema_version == 17
+    assert second.schema_version == 19
     assert second.applied_migrations == ()
 
     with closing(connect_database(database_path)) as connection:
@@ -62,7 +65,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
                         'analysis_runs', 'analyzed_frames', 'detections',
                         'tracks', 'track_observations', 'rules', 'rule_events',
                         'display_actions', 'identities', 'identity_embeddings',
-                        'face_match_events', 'person_instances', 'track_identity_links'
+                        'face_match_events', 'person_instances', 'track_identity_links',
+                        'analysis_worker_leases', 'hiperwall_display_states'
                     )
                 """
             )
@@ -86,6 +90,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             {"version": 15, "name": "camera_always_connected"},
             {"version": 16, "name": "candidate_free_face_events"},
             {"version": 17, "name": "rule_soft_delete"},
+            {"version": 18, "name": "analysis_worker_leases"},
+            {"version": 19, "name": "hiperwall_display_states"},
         ]
         assert camera_table["name"] == "cameras"
         assert detection_tables == {
@@ -102,6 +108,8 @@ def test_initialize_database_creates_schema_and_is_idempotent(tmp_path: Path) ->
             "face_match_events",
             "person_instances",
             "track_identity_links",
+            "analysis_worker_leases",
+            "hiperwall_display_states",
         }
         assert connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -135,7 +143,7 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
             )
             """
         )
-        for migration in MIGRATIONS[:-3]:
+        for migration in MIGRATIONS[:14]:
             migration.apply(connection)
             connection.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
@@ -182,8 +190,8 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
 
     state = initialize_database(database_path)
 
-    assert state.schema_version == 17
-    assert state.applied_migrations == (15, 16, 17)
+    assert state.schema_version == 19
+    assert state.applied_migrations == (15, 16, 17, 18, 19)
     with closing(connect_database(database_path)) as connection:
         camera = connection.execute(
             """
@@ -200,7 +208,8 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
                 WHERE type = 'table'
                     AND name IN (
                         'identities', 'identity_embeddings', 'face_match_events',
-                        'person_instances', 'track_identity_links'
+                        'person_instances', 'track_identity_links', 'analysis_worker_leases',
+                        'hiperwall_display_states'
                     )
                 """
             )
@@ -226,6 +235,8 @@ def test_initialize_database_upgrades_schema_version_fourteen_to_latest(
         "face_match_events",
         "person_instances",
         "track_identity_links",
+        "analysis_worker_leases",
+        "hiperwall_display_states",
     }
     assert foreign_key_errors == []
     assert dict(legacy_face_event) == {
@@ -241,8 +252,135 @@ def test_check_database_health_reads_current_database_state(tmp_path: Path) -> N
 
     health = check_database_health(database_path)
 
-    assert health.schema_version == 17
+    assert health.schema_version == 19
     assert health.journal_mode == "wal"
+
+
+def test_display_state_migration_collapses_legacy_open_retries(tmp_path: Path) -> None:
+    database_path = tmp_path / "legacy-live.db"
+    with closing(connect_database(database_path)) as connection, connection:
+        connection.execute(
+            """
+            CREATE TABLE schema_migrations (
+                version INTEGER PRIMARY KEY,
+                name TEXT NOT NULL,
+                applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        for migration in MIGRATIONS[:-1]:
+            migration.apply(connection)
+            connection.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
+                (migration.version, migration.name),
+            )
+        connection.execute(
+            """
+            INSERT INTO rules (
+                id, name, source_name, rule_type, class_name,
+                geometry_json, parameters_json, enabled
+            ) VALUES ('rule-1', 'Gray shirt', 'camera-1', 'visual_color', 'person',
+                '{}', ?, 1)
+            """,
+            (json.dumps({"cooldown_seconds": 7}),),
+        )
+        connection.execute(
+            """
+            INSERT INTO analysis_runs (
+                id, source_type, source_name, detector_type, model_name, model_sha256,
+                device, input_size, confidence_threshold, nms_threshold, sample_fps,
+                status, started_at
+            ) VALUES ('run-1', 'rtsp', 'camera-1', 'test', 'model.onnx', ?,
+                'cpu', 640, 0.25, 0.45, 2, 'running', '2026-08-21T00:00:00+00:00')
+            """,
+            ("a" * 64,),
+        )
+        frame_id = connection.execute(
+            """
+            INSERT INTO analyzed_frames (
+                analysis_run_id, source_index, sample_index, source_timestamp_seconds,
+                frame_width, frame_height, inference_seconds, detection_count
+            ) VALUES ('run-1', 0, 0, 0, 640, 360, 0.01, 0)
+            """
+        ).lastrowid
+        connection.execute(
+            """
+            INSERT INTO tracks (
+                analysis_run_id, track_id, class_id, class_name,
+                first_sample_index, last_sample_index,
+                first_seen_timestamp_seconds, last_seen_timestamp_seconds,
+                observation_count, max_confidence, is_active
+            ) VALUES ('run-1', 1, 0, 'person', 0, 0, 0, 0, 1, 0.9, 1)
+            """
+        )
+        for index in (1, 2):
+            event_id = f"event-{index}"
+            action_id = f"open-{index}"
+            connection.execute(
+                """
+                INSERT INTO rule_events (
+                    id, rule_id, analysis_run_id, track_id, analyzed_frame_id,
+                    event_type, event_state, occurred_at_seconds,
+                    class_name, confidence, payload_json
+                ) VALUES (?, 'rule-1', 'run-1', 1, ?,
+                    'upper_body_color_detected', 'occurred', 0, 'person', 0.9, '{}')
+                """,
+                (event_id, frame_id),
+            )
+            connection.execute(
+                """
+                INSERT INTO display_actions (
+                    id, rule_event_id, action_type, mode, status,
+                    request_json, result_json, attempt_count,
+                    available_at, created_at, updated_at
+                ) VALUES (?, ?, 'open_source', 'live', 'retry', ?,
+                    '{"external_request_sent":false}', ?, ?, ?, ?)
+                """,
+                (
+                    action_id,
+                    event_id,
+                    json.dumps(
+                        {
+                            "instance_id": f"instance-{index}",
+                            "close_after_seconds": 60,
+                        }
+                    ),
+                    index,
+                    f"2026-08-21T00:0{index}:00+00:00",
+                    f"2026-08-21T00:0{index}:00+00:00",
+                    f"2026-08-21T00:0{index}:00+00:00",
+                ),
+            )
+        connection.execute("PRAGMA user_version = 18")
+
+    state = initialize_database(database_path)
+
+    assert state.applied_migrations == (19,)
+    with closing(connect_database(database_path)) as connection:
+        actions = connection.execute(
+            """
+            SELECT id, status, last_error_code
+            FROM display_actions ORDER BY id
+            """
+        ).fetchall()
+        display_state = connection.execute(
+            "SELECT * FROM hiperwall_display_states"
+        ).fetchone()
+
+    assert [dict(action) for action in actions] == [
+        {
+            "id": "open-1",
+            "status": "failed",
+            "last_error_code": "superseded_by_display_gate",
+        },
+        {"id": "open-2", "status": "retry", "last_error_code": None},
+    ]
+    assert display_state["rule_id"] == "rule-1"
+    assert display_state["source_name"] == "camera-1"
+    assert display_state["state"] == "DISPLAYING"
+    assert display_state["active_rule_event_id"] == "event-2"
+    assert display_state["open_action_id"] == "open-2"
+    assert display_state["cooldown_seconds"] == 7
 
 
 def test_check_database_health_does_not_create_a_missing_database(tmp_path: Path) -> None:

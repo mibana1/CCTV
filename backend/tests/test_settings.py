@@ -313,6 +313,25 @@ def test_settings_reject_invalid_rtsp_url() -> None:
         Settings(_env_file=None, rtsp_worker_url="http://camera/stream")
 
 
+def test_settings_reject_invalid_analysis_supervisor_restart_window() -> None:
+    with pytest.raises(ValueError, match="ANALYSIS_SUPERVISOR_RESTART_MAX_SECONDS"):
+        Settings(
+            _env_file=None,
+            analysis_supervisor_restart_base_seconds=10,
+            analysis_supervisor_restart_max_seconds=5,
+        )
+
+
+def test_settings_reject_short_analysis_supervisor_lease() -> None:
+    with pytest.raises(ValueError, match="ANALYSIS_SUPERVISOR_LEASE_SECONDS"):
+        Settings(
+            _env_file=None,
+            analysis_supervisor_enabled=True,
+            analysis_supervisor_reconcile_interval_seconds=5,
+            analysis_supervisor_lease_seconds=10,
+        )
+
+
 @pytest.mark.parametrize(
     "value",
     (

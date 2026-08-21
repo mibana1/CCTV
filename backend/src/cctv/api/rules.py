@@ -254,6 +254,9 @@ def delete_rule(request: Request, rule_id: str) -> None:
         status.HTTP_422_UNPROCESSABLE_CONTENT: {
             "description": "Rule has no enabled Hiperwall mapping"
         },
+        status.HTTP_409_CONFLICT: {
+            "description": "Rule/camera display is already displaying or cooling down"
+        },
     },
 )
 def send_rule_test_event(request: Request, rule_id: str) -> RuleTestEventResponse:
@@ -263,6 +266,7 @@ def send_rule_test_event(request: Request, rule_id: str) -> RuleTestEventRespons
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="rule not found")
     definition = current.to_definition()
     settings = request.app.state.settings
+    run_finished = False
     try:
         mapping = mapping_from_rule(
             definition,
@@ -319,7 +323,7 @@ def send_rule_test_event(request: Request, rule_id: str) -> RuleTestEventRespons
         )
         if len(actions) != 1:
             raise RuntimeError("manual Hiperwall test did not produce one display action")
-        repository.save_frame(
+        outcome = repository.save_frame_with_outcome(
             run.id,
             FrameDetections(
                 source_index=0,
@@ -343,15 +347,25 @@ def send_rule_test_event(request: Request, rule_id: str) -> RuleTestEventRespons
             display_actions=actions,
         )
         repository.finish_analysis_run(run.id, status=AnalysisRunStatus.COMPLETED)
-    except Exception as error:
-        try:
-            repository.finish_analysis_run(
-                run.id,
-                status=AnalysisRunStatus.FAILED,
-                error_type=type(error).__name__,
+        run_finished = True
+        if event.id in outcome.suppressed_rule_event_ids:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "이 규칙과 카메라는 이미 Hiperwall 표시 중이거나 "
+                    "close 후 cooldown 중입니다."
+                ),
             )
-        except LookupError:
-            pass
+    except Exception as error:
+        if not run_finished:
+            try:
+                repository.finish_analysis_run(
+                    run.id,
+                    status=AnalysisRunStatus.FAILED,
+                    error_type=type(error).__name__,
+                )
+            except LookupError:
+                pass
         raise
 
     worker = getattr(request.app.state, "hiperwall_worker", None)

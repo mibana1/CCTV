@@ -131,6 +131,9 @@ class DisplayActionRepository:
         with closing(connect_database(self.database_path)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
+                from cctv.db.display_states import release_expired_display_states
+
+                release_expired_display_states(connection, now=now)
                 row = connection.execute(
                     """
                     SELECT id
@@ -178,7 +181,10 @@ class DisplayActionRepository:
         result: dict[str, Any],
         followup_action: DisplayAction | None = None,
     ) -> None:
-        now = _utc_text()
+        from cctv.db.display_states import record_display_action_success
+
+        now_value = datetime.now(UTC)
+        now = _utc_text(now_value)
         with closing(connect_database(self.database_path)) as connection, connection:
             cursor = connection.execute(
                 """
@@ -193,6 +199,14 @@ class DisplayActionRepository:
                 raise RuntimeError("Hiperwall action is not in processing state")
             if followup_action is not None:
                 insert_display_actions(connection, actions=(followup_action,))
+            record_display_action_success(
+                connection,
+                action_id=action_id,
+                followup_action_id=(
+                    followup_action.id if followup_action is not None else None
+                ),
+                completed_at=now_value,
+            )
 
     def mark_failed(
         self,
@@ -203,6 +217,8 @@ class DisplayActionRepository:
         retry_after_seconds: float | None,
     ) -> str:
         """Record a sanitized failure and either retry or terminally fail it."""
+        from cctv.db.display_states import release_failed_open_state
+
         now_value = datetime.now(UTC)
         now = _utc_text(now_value)
         if retry_after_seconds is None:
@@ -233,6 +249,13 @@ class DisplayActionRepository:
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Hiperwall action is not in processing state")
+            if status == "failed":
+                release_failed_open_state(
+                    connection,
+                    action_id=action_id,
+                    error_code=error_code,
+                    failed_at=now_value,
+                )
         return status
 
 

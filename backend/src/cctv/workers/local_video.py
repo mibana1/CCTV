@@ -488,6 +488,33 @@ def run(argv: Sequence[str] | None = None) -> None:
                     if rule_engine is not None
                     else ()
                 )
+                display_actions = (
+                    hiperwall_planner.plan(
+                        rule_events,
+                        analysis_run_id=analysis_run.id,
+                        source_name=Path(video_path).name,
+                    )
+                    if hiperwall_planner is not None and analysis_run is not None
+                    else ()
+                )
+                if detection_repository is not None and analysis_run is not None:
+                    outcome = detection_repository.save_frame_with_outcome(
+                        analysis_run.id,
+                        result,
+                        active_track_ids=(
+                            tracker.active_track_ids if tracker is not None else None
+                        ),
+                        rule_events=rule_events,
+                        display_actions=display_actions,
+                    )
+                    persisted_event_ids = set(outcome.persisted_rule_event_ids)
+                    persisted_action_ids = set(outcome.persisted_display_action_ids)
+                    rule_events = tuple(
+                        event for event in rule_events if event.id in persisted_event_ids
+                    )
+                    display_actions = tuple(
+                        action for action in display_actions if action.id in persisted_action_ids
+                    )
                 for emitted_event in rule_events:
                     logger.info(
                         "Rule event emitted",
@@ -504,29 +531,10 @@ def run(argv: Sequence[str] | None = None) -> None:
                         },
                     )
                 emitted_rule_events += len(rule_events)
-                display_actions = (
-                    hiperwall_planner.plan(
-                        rule_events,
-                        analysis_run_id=analysis_run.id,
-                        source_name=Path(video_path).name,
-                    )
-                    if hiperwall_planner is not None and analysis_run is not None
-                    else ()
-                )
                 if settings.app_mode is AppMode.LIVE:
                     queued_hiperwall_actions += len(display_actions)
                 else:
                     simulated_hiperwall_actions += len(display_actions)
-                if detection_repository is not None and analysis_run is not None:
-                    detection_repository.save_frame(
-                        analysis_run.id,
-                        result,
-                        active_track_ids=(
-                            tracker.active_track_ids if tracker is not None else None
-                        ),
-                        rule_events=rule_events,
-                        display_actions=display_actions,
-                    )
 
             frame_consumers.append(analyze_frame)
 

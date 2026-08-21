@@ -267,6 +267,8 @@ def test_dashboard_controls_sessions_and_serves_snapshots(tmp_path: Path) -> Non
     assert 'api("/hiperwall/inventory")' in color_event_page.text
     assert 'id="hiperwall-content"' in color_event_page.text
     assert 'id="hiperwall-zone"' in color_event_page.text
+    assert 'id="analysis-summary"' in color_event_page.text
+    assert 'api("/analysis-workers")' in color_event_page.text
     assert 'content_uuid: content?.uuid || contentValue' in color_event_page.text
     assert 'id="hiperwall-layout-mode"' in color_event_page.text
     assert 'id="hiperwall-x"' in color_event_page.text

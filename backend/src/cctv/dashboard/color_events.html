@@ -75,6 +75,9 @@
       .rule-info { min-width: 0; }
       .rule-info strong, .rule-info small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .rule-info small { margin-top: 5px; color: var(--muted); }
+      .rule-info small.analysis-running { color: var(--accent); }
+      .rule-info small.analysis-reconnecting { color: var(--warning); }
+      .rule-info small.analysis-failed { color: var(--danger); }
       .rule-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 7px; }
       .badge { display: inline-flex; border-radius: 999px; padding: 5px 8px; color: var(--accent); background: rgba(50, 214, 160, .12); font-size: .72rem; font-weight: 800; }
       .badge.disabled { color: var(--danger); background: rgba(255, 107, 114, .12); }
@@ -187,7 +190,7 @@
         <div class="stack">
           <section class="panel">
             <div class="panel-heading">
-              <div><h2>등록된 색상 이벤트</h2><small id="rule-count">목록을 불러오는 중입니다.</small></div>
+              <div><h2>등록된 색상 이벤트</h2><small id="rule-count">목록을 불러오는 중입니다.</small><small id="analysis-summary">상시 분석 상태를 확인하는 중입니다.</small></div>
               <button id="rule-reload" class="secondary" type="button">새로고침</button>
             </div>
             <div id="rule-list" class="rule-list"><p class="empty">등록된 색상 이벤트가 없습니다.</p></div>
@@ -204,7 +207,7 @@
 
     <script>
       const colorLabels = { red: "빨강", orange: "주황", yellow: "노랑", green: "초록", blue: "파랑", purple: "보라", pink: "분홍", black: "검정", white: "흰색", gray: "회색" };
-      const state = { cameras: [], rules: [], inventory: { contents: [], zones: [], walls: [] }, editingRuleId: null };
+      const state = { cameras: [], rules: [], analysisWorkers: { enabled: false, running: false, active_workers: 0, items: [] }, inventory: { contents: [], zones: [], walls: [] }, editingRuleId: null };
 
       async function api(path, options = {}) {
         const response = await fetch(path, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
@@ -234,6 +237,35 @@
         const select = document.getElementById("rule-camera");
         select.replaceChildren(new Option("카메라를 선택하세요", ""));
         for (const camera of state.cameras) select.append(new Option(`${camera.name} · ${camera.location || "설치 위치 미지정"}`, camera.stream_path));
+      }
+
+      function relativeTime(value) {
+        if (!value) return "없음";
+        const seconds = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 1000));
+        if (seconds < 60) return `${seconds}초 전`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+        return `${Math.floor(seconds / 3600)}시간 전`;
+      }
+
+      function analysisWorker(sourceName) {
+        return state.analysisWorkers.items.find(item => item.stream_path === sourceName);
+      }
+
+      function analysisMeta(rule) {
+        const worker = analysisWorker(rule.source_name);
+        if (!state.analysisWorkers.enabled) return { className: "analysis-failed", text: "상시 분석 비활성" };
+        if (!worker) return { className: "analysis-failed", text: "상시 분석 대기 · 활성 규칙 적용 확인 필요" };
+        const labels = { starting: "시작 중", running: "실행 중", reconnecting: "재연결 중", stopping: "정지 중", failed: "실패", stopped: "정지" };
+        const className = worker.status === "running" ? "analysis-running" : worker.status === "reconnecting" || worker.status === "starting" ? "analysis-reconnecting" : "analysis-failed";
+        return { className, text: `상시 분석 ${labels[worker.status] || worker.status} · 규칙 ${worker.rule_count}개 · 마지막 프레임 ${relativeTime(worker.last_frame_at)} · 마지막 이벤트 ${relativeTime(worker.last_event_at)}` };
+      }
+
+      async function loadAnalysisWorkers() {
+        state.analysisWorkers = await api("/analysis-workers");
+        const summary = document.getElementById("analysis-summary");
+        summary.textContent = state.analysisWorkers.enabled
+          ? ` · 상시 분석 ${state.analysisWorkers.running ? "관리 중" : "중지"} · 실행 ${state.analysisWorkers.active_workers}/${state.analysisWorkers.max_workers}`
+          : " · 상시 분석 비활성";
       }
 
       function inventoryContentKey(content) {
@@ -470,7 +502,11 @@
           const info = document.createElement("div"); info.className = "rule-info";
           const name = document.createElement("strong"); name.textContent = rule.name;
           const meta = document.createElement("small"); meta.textContent = ruleMeta(rule);
-          info.append(name, meta);
+          const analysis = document.createElement("small");
+          const workerMeta = analysisMeta(rule);
+          analysis.className = workerMeta.className;
+          analysis.textContent = workerMeta.text;
+          info.append(name, meta, analysis);
           const actions = document.createElement("div"); actions.className = "rule-actions";
           const badge = document.createElement("span"); badge.className = `badge${rule.enabled ? "" : " disabled"}`; badge.textContent = rule.enabled ? "활성" : "중지";
           const toggle = document.createElement("button"); toggle.type = "button"; toggle.className = "toggle"; toggle.textContent = rule.enabled ? "중지" : "활성화";
@@ -532,7 +568,7 @@
         }
       }
 
-      async function refresh() { await loadRules(); await loadEvents(); }
+      async function refresh() { await loadAnalysisWorkers(); await loadRules(); await loadEvents(); }
 
       document.getElementById("color-rule-form").addEventListener("submit", async event => {
         event.preventDefault(); setMessage("");
@@ -547,7 +583,7 @@
             body: JSON.stringify(buildRulePayload())
           });
           resetRuleForm();
-          setMessage(editingRuleId ? "색상 이벤트가 수정됐습니다. 다음 테스트 시작부터 적용됩니다." : "색상 이벤트가 등록됐습니다. 다음 테스트 시작부터 적용됩니다.", "success");
+          setMessage(editingRuleId ? "색상 이벤트가 수정됐습니다. 상시 분석 Worker가 변경을 감지해 자동 재시작합니다." : "색상 이벤트가 등록됐습니다. 상시 분석 Worker가 잠시 후 자동 시작합니다.", "success");
           await refresh();
         } catch (error) { setMessage(error.message, "error"); }
         finally { submit.disabled = false; }
@@ -558,7 +594,7 @@
       document.getElementById("hiperwall-reload").addEventListener("click", loadInventory);
       document.getElementById("hiperwall-zone").addEventListener("change", () => { renderZoneDetail(); applyZoneLayoutDefaults(); });
       document.getElementById("hiperwall-layout-mode").addEventListener("change", applyZoneLayoutDefaults);
-      async function initialize() { await loadCameras(); await Promise.all([loadRuntimeMode(), loadInventory(), loadRules(), loadEvents()]); }
+      async function initialize() { await loadCameras(); await Promise.all([loadRuntimeMode(), loadInventory(), loadAnalysisWorkers()]); await loadRules(); await loadEvents(); }
       initialize().catch(error => setMessage(error.message, "error"));
     </script>
   </body>

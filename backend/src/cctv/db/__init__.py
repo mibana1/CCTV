@@ -1,5 +1,6 @@
 """Database connections, schemas, repositories, and migrations."""
 
+from cctv.db.analysis_leases import AnalysisLeaseRepository
 from cctv.db.cameras import (
     CameraPage,
     CameraProvisioningStatus,
@@ -24,6 +25,7 @@ from cctv.db.detections import (
     DetectionPage,
     DetectionRecord,
     DetectionRepository,
+    FramePersistenceResult,
     TrackObservationPage,
     TrackObservationRecord,
     TrackPage,
@@ -34,6 +36,7 @@ from cctv.db.display_actions import (
     DisplayActionRecord,
     DisplayActionRepository,
 )
+from cctv.db.display_states import DisplayStateRecord, DisplayStateRepository
 from cctv.db.face_matches import (
     FaceMatchEventInput,
     FaceMatchEventPage,
@@ -78,6 +81,7 @@ __all__ = [
     "MAX_EMBEDDING_DIMENSIONS",
     "MAX_PAGE_SIZE",
     "MIN_EMBEDDING_DIMENSIONS",
+    "AnalysisLeaseRepository",
     "AnalysisRunPage",
     "AnalysisRunRecord",
     "AnalysisRunStatus",
@@ -94,11 +98,14 @@ __all__ = [
     "DisplayActionPage",
     "DisplayActionRecord",
     "DisplayActionRepository",
+    "DisplayStateRecord",
+    "DisplayStateRepository",
     "FaceMatchEventInput",
     "FaceMatchEventPage",
     "FaceMatchEventRecord",
     "FaceMatchRepository",
     "FaceMatchRunSummary",
+    "FramePersistenceResult",
     "IdentityEmbeddingInput",
     "IdentityEmbeddingPage",
     "IdentityEmbeddingRecord",

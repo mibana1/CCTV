@@ -8,6 +8,7 @@ import re
 import threading
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
+from math import isfinite
 
 from cctv.core.execution import external_action_allowed
 from cctv.core.settings import AppMode, Settings
@@ -77,6 +78,7 @@ class HiperwallLivePlanner:
             action_type = "restore_layout" if event.event_state == "ended" else "open_source"
             if event.event_state == "occurred":
                 request["close_after_seconds"] = mapping.display_seconds
+                request["display_cooldown_seconds"] = _display_cooldown_seconds(rule)
             planned.append(
                 DisplayAction(
                     rule_event_id=event.id,
@@ -279,6 +281,18 @@ def _instance_id(event: RuleEvent, source_name: str) -> str:
         :20
     ]
     return f"cctv-{source}-{digest}"
+
+
+def _display_cooldown_seconds(rule: RuleDefinition) -> float:
+    value = rule.parameters.get("cooldown_seconds", 0)
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(float(value))
+        or not 0 <= float(value) <= 3_600
+    ):
+        raise ValueError("cooldown_seconds must be between 0 and 3600")
+    return float(value)
 
 
 def _scheduled_close(action: DisplayActionRecord) -> DisplayAction | None:
