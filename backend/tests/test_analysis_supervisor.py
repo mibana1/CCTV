@@ -6,6 +6,7 @@ from pathlib import Path
 from time import sleep
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 from cctv.core.settings import Settings
@@ -110,6 +111,108 @@ def _create_color_rule(repository: RuleRepository, source_name: str, name: str):
             "minimum_color_confidence": 0.35,
             "cooldown_seconds": 30,
         },
+    )
+
+
+@dataclass
+class _WatchdogScenario:
+    clock: FakeClock
+    base_time: datetime
+    settings: Settings
+    supervisor: AnalysisSupervisor
+    process: HangingFakeProcess
+    camera_id: int
+    run_id: str
+
+    def emit_heartbeat(
+        self,
+        *,
+        at: float,
+        stage: str,
+        stage_started_at: datetime,
+    ) -> None:
+        self.clock.value = at
+        self.supervisor._consume_worker_record(
+            self.camera_id,
+            self.process,
+            {
+                "event": "rtsp_worker_heartbeat",
+                "stage": stage,
+                "stage_started_at": stage_started_at.isoformat(),
+                "last_frame_at": self.base_time.isoformat(),
+            },
+        )
+
+
+def _create_watchdog_scenario(tmp_path: Path) -> _WatchdogScenario:
+    clock = FakeClock()
+    base_time = datetime(2026, 8, 21, 8, tzinfo=UTC)
+    settings = _settings(
+        tmp_path,
+        analysis_worker_heartbeat_interval_seconds=1,
+        analysis_supervisor_stale_timeout_seconds=10,
+        analysis_supervisor_initial_grace_seconds=30,
+        analysis_supervisor_reconnect_stale_timeout_seconds=30,
+        analysis_supervisor_shutdown_timeout_seconds=1,
+    )
+    initialize_database(settings.database_path)
+    cameras = CameraRepository(settings.database_path)
+    rules = RuleRepository(settings.database_path)
+    camera = cameras.create_camera(name="Lobby", stream_path="lobby")
+    _create_color_rule(rules, camera.stream_path, "Rule")
+    process = HangingFakeProcess()
+
+    def launch(command: list[str], environment: dict[str, str]) -> HangingFakeProcess:
+        del command, environment
+        return process
+
+    supervisor = AnalysisSupervisor(
+        settings,
+        camera_repository=cameras,
+        rule_repository=rules,
+        process_factory=launch,
+        monotonic_clock=clock,
+        now_factory=lambda: base_time + timedelta(seconds=clock.value),
+        owner_id="backend-a",
+    )
+    supervisor.reconcile_once()
+    run_id = supervisor.snapshot().items[0].analysis_run_id
+    assert run_id is not None
+    DetectionRepository(settings.database_path).create_analysis_run(
+        source_type="rtsp",
+        source_name="lobby",
+        camera_id=camera.id,
+        detector_type="test",
+        model_name="model.onnx",
+        model_sha256="a" * 64,
+        device="cpu",
+        input_size=640,
+        confidence_threshold=0.25,
+        nms_threshold=0.45,
+        sample_fps=2,
+        run_id=run_id,
+    )
+    with connect_database(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO tracks (
+                analysis_run_id, track_id, class_id, class_name,
+                first_sample_index, last_sample_index,
+                first_seen_timestamp_seconds, last_seen_timestamp_seconds,
+                observation_count, max_confidence, is_active
+            ) VALUES (?, 1, 0, ?, 0, 0, 0, 0, 1, 0.9, 1)
+            """,
+            (run_id, "person"),
+        )
+        connection.commit()
+    return _WatchdogScenario(
+        clock=clock,
+        base_time=base_time,
+        settings=settings,
+        supervisor=supervisor,
+        process=process,
+        camera_id=camera.id,
+        run_id=run_id,
     )
 
 
@@ -464,111 +567,50 @@ def test_two_supervisors_do_not_start_duplicate_camera_workers(tmp_path: Path) -
     second.stop()
 
 
-def test_watchdog_does_not_restart_fresh_heartbeat_but_restarts_database_hang(
+@pytest.mark.parametrize("stage", ("inference", "database_save"))
+def test_watchdog_restarts_stalled_stage_despite_fresh_heartbeat(
     tmp_path: Path,
+    stage: str,
 ) -> None:
-    clock = FakeClock()
-    base_time = datetime(2026, 8, 21, 8, tzinfo=UTC)
-    settings = _settings(
-        tmp_path,
-        analysis_worker_heartbeat_interval_seconds=1,
-        analysis_supervisor_stale_timeout_seconds=10,
-        analysis_supervisor_initial_grace_seconds=30,
-        analysis_supervisor_reconnect_stale_timeout_seconds=30,
-        analysis_supervisor_shutdown_timeout_seconds=1,
+    scenario = _create_watchdog_scenario(tmp_path)
+    stage_started_at = scenario.base_time + timedelta(seconds=1)
+    scenario.emit_heartbeat(
+        at=1,
+        stage=stage,
+        stage_started_at=stage_started_at,
     )
-    initialize_database(settings.database_path)
-    cameras = CameraRepository(settings.database_path)
-    rules = RuleRepository(settings.database_path)
-    camera = cameras.create_camera(name="Lobby", stream_path="lobby")
-    _create_color_rule(rules, camera.stream_path, "Rule")
-    processes: list[HangingFakeProcess] = []
-
-    def launch(command: list[str], environment: dict[str, str]) -> HangingFakeProcess:
-        del command, environment
-        process = HangingFakeProcess()
-        processes.append(process)
-        return process
-
-    supervisor = AnalysisSupervisor(
-        settings,
-        camera_repository=cameras,
-        rule_repository=rules,
-        process_factory=launch,
-        monotonic_clock=clock,
-        now_factory=lambda: base_time + timedelta(seconds=clock.value),
-        owner_id="backend-a",
+    scenario.emit_heartbeat(
+        at=10.9,
+        stage=stage,
+        stage_started_at=stage_started_at,
     )
-    supervisor.reconcile_once()
-    process = processes[0]
-    run_id = supervisor.snapshot().items[0].analysis_run_id
-    assert run_id is not None
-    DetectionRepository(settings.database_path).create_analysis_run(
-        source_type="rtsp",
-        source_name="lobby",
-        camera_id=camera.id,
-        detector_type="test",
-        model_name="model.onnx",
-        model_sha256="a" * 64,
-        device="cpu",
-        input_size=640,
-        confidence_threshold=0.25,
-        nms_threshold=0.45,
-        sample_fps=2,
-        run_id=run_id,
-    )
-    with connect_database(settings.database_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO tracks (
-                analysis_run_id, track_id, class_id, class_name,
-                first_sample_index, last_sample_index,
-                first_seen_timestamp_seconds, last_seen_timestamp_seconds,
-                observation_count, max_confidence, is_active
-            ) VALUES (?, 1, 0, 'person', 0, 0, 0, 0, 1, 0.9, 1)
-            """,
-            (run_id,),
-        )
-        connection.commit()
+    scenario.supervisor.reconcile_once()
+    assert scenario.process.terminated is False
+    assert scenario.process.killed is False
 
-    clock.value = 1
-    supervisor._consume_worker_record(
-        camera.id,
-        process,
-        {
-            "event": "rtsp_worker_heartbeat",
-            "stage": "database_save",
-            "stage_started_at": (base_time + timedelta(seconds=1)).isoformat(),
-            "last_frame_at": base_time.isoformat(),
-        },
-    )
-    clock.value = 10.9
-    supervisor.reconcile_once()
-    assert process.terminated is False
-    assert process.killed is False
+    scenario.clock.value = 11.1
+    scenario.supervisor.reconcile_once()
 
-    clock.value = 11.1
-    supervisor.reconcile_once()
-
-    snapshot = supervisor.snapshot().items[0]
-    assert process.terminated is True
-    assert process.killed is True
+    expected_failure = f"{stage}_stalled"
+    snapshot = scenario.supervisor.snapshot().items[0]
+    assert scenario.process.terminated is True
+    assert scenario.process.killed is True
     assert snapshot.status is AnalysisWorkerStatus.FAILED
-    assert snapshot.current_error_type == "database_save_stalled"
-    assert snapshot.last_failure_type == "database_save_stalled"
-    assert snapshot.last_failure_run_id == run_id
+    assert snapshot.current_error_type == expected_failure
+    assert snapshot.last_failure_type == expected_failure
+    assert snapshot.last_failure_run_id == scenario.run_id
     assert snapshot.next_restart_at is not None
-    with connect_database(settings.database_path) as connection:
+    with connect_database(scenario.settings.database_path) as connection:
         run = connection.execute(
             "SELECT status, completion_reason FROM analysis_runs WHERE id = ?",
-            (run_id,),
+            (scenario.run_id,),
         ).fetchone()
         active_tracks = connection.execute(
             "SELECT COUNT(*) FROM tracks WHERE analysis_run_id = ? AND is_active = 1",
-            (run_id,),
+            (scenario.run_id,),
         ).fetchone()[0]
     assert run["status"] == AnalysisRunStatus.INTERRUPTED
-    assert run["completion_reason"] == "watchdog_database_save_stalled"
+    assert run["completion_reason"] == f"watchdog_{expected_failure}"
     assert active_tracks == 0
 
 
