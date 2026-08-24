@@ -31,6 +31,15 @@ class AnalysisWorkerResponse(BaseModel):
     next_restart_at: datetime | None
     last_error_type: str | None
     last_message: str | None
+    current_error_type: str | None = None
+    current_error_at: datetime | None = None
+    last_failure_type: str | None = None
+    last_failure_message: str | None = None
+    last_failure_at: datetime | None = None
+    last_failure_run_id: str | None = None
+    last_heartbeat_at: datetime | None = None
+    current_stage: str | None = None
+    stage_started_at: datetime | None = None
     requested_device: str | None = None
     effective_device: str | None = None
     execution_provider: str | None = None

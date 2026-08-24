@@ -13,6 +13,7 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     snapshot_dir = tmp_path / "snapshots"
     identity_photo_dir = tmp_path / "identity-images"
     vacuum_backup_dir = tmp_path / "vacuum-backups"
+    database_backup_dir = tmp_path / "manual-backups"
     face_detection_model_path = tmp_path / "models" / "yunet.onnx"
     face_embedding_model_path = tmp_path / "models" / "sface.onnx"
     model_classes_path = tmp_path / "models" / "classes.txt"
@@ -60,6 +61,13 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     monkeypatch.setenv("CCTV_RETENTION_VACUUM_MIN_FREELIST_PAGES", "5000")
     monkeypatch.setenv("CCTV_RETENTION_VACUUM_FREE_SPACE_MULTIPLIER", "4")
     monkeypatch.setenv("CCTV_RETENTION_VACUUM_BACKUP_DIR", str(vacuum_backup_dir))
+    monkeypatch.setenv("CCTV_DATABASE_BACKUP_DIR", str(database_backup_dir))
+    monkeypatch.setenv("CCTV_ANALYSIS_WORKER_HEARTBEAT_INTERVAL_SECONDS", "2")
+    monkeypatch.setenv("CCTV_ANALYSIS_SUPERVISOR_INITIAL_GRACE_SECONDS", "45")
+    monkeypatch.setenv("CCTV_ANALYSIS_SUPERVISOR_STALE_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("CCTV_ANALYSIS_SUPERVISOR_RECONNECT_STALE_TIMEOUT_SECONDS", "40")
+    monkeypatch.setenv("CCTV_ANALYSIS_SUPERVISOR_RESTART_WINDOW_SECONDS", "120")
+    monkeypatch.setenv("CCTV_ANALYSIS_SUPERVISOR_MAX_RESTARTS_IN_WINDOW", "3")
     monkeypatch.setenv("CCTV_HIPERWALL_DRY_RUN_ENABLED", "false")
     monkeypatch.setenv("CCTV_HOST", "0.0.0.0")
     monkeypatch.setenv("CCTV_PORT", "9000")
@@ -158,6 +166,13 @@ def test_settings_load_environment_variables(monkeypatch, tmp_path: Path) -> Non
     assert settings.retention_vacuum_min_freelist_pages == 5_000
     assert settings.retention_vacuum_free_space_multiplier == 4
     assert settings.retention_vacuum_backup_dir == vacuum_backup_dir
+    assert settings.database_backup_dir == database_backup_dir
+    assert settings.analysis_worker_heartbeat_interval_seconds == 2
+    assert settings.analysis_supervisor_initial_grace_seconds == 45
+    assert settings.analysis_supervisor_stale_timeout_seconds == 12
+    assert settings.analysis_supervisor_reconnect_stale_timeout_seconds == 40
+    assert settings.analysis_supervisor_restart_window_seconds == 120
+    assert settings.analysis_supervisor_max_restarts_in_window == 3
     assert settings.hiperwall_dry_run_enabled is False
     assert settings.external_actions_enabled is True
     assert settings.host == "0.0.0.0"
@@ -290,6 +305,13 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
         "CCTV_RETENTION_VACUUM_MIN_FREELIST_PAGES",
         "CCTV_RETENTION_VACUUM_FREE_SPACE_MULTIPLIER",
         "CCTV_RETENTION_VACUUM_BACKUP_DIR",
+        "CCTV_DATABASE_BACKUP_DIR",
+        "CCTV_ANALYSIS_WORKER_HEARTBEAT_INTERVAL_SECONDS",
+        "CCTV_ANALYSIS_SUPERVISOR_INITIAL_GRACE_SECONDS",
+        "CCTV_ANALYSIS_SUPERVISOR_STALE_TIMEOUT_SECONDS",
+        "CCTV_ANALYSIS_SUPERVISOR_RECONNECT_STALE_TIMEOUT_SECONDS",
+        "CCTV_ANALYSIS_SUPERVISOR_RESTART_WINDOW_SECONDS",
+        "CCTV_ANALYSIS_SUPERVISOR_MAX_RESTARTS_IN_WINDOW",
         "CCTV_HIPERWALL_DRY_RUN_ENABLED",
         "CCTV_LOCAL_VIDEO_PATH",
     ):
@@ -350,6 +372,13 @@ def test_settings_execution_defaults_are_fail_safe(monkeypatch) -> None:
     assert settings.retention_vacuum_min_freelist_pages == 10_000
     assert settings.retention_vacuum_free_space_multiplier == 3
     assert settings.retention_vacuum_backup_dir == Path("runtime/backups/pre-vacuum")
+    assert settings.database_backup_dir.name == "manual"
+    assert settings.analysis_worker_heartbeat_interval_seconds == 5
+    assert settings.analysis_supervisor_initial_grace_seconds == 180
+    assert settings.analysis_supervisor_stale_timeout_seconds == 30
+    assert settings.analysis_supervisor_reconnect_stale_timeout_seconds == 120
+    assert settings.analysis_supervisor_restart_window_seconds == 300
+    assert settings.analysis_supervisor_max_restarts_in_window == 5
     assert settings.hiperwall_dry_run_enabled is True
     assert settings.local_video_path is None
     assert settings.external_actions_enabled is False

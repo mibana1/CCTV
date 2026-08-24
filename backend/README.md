@@ -134,10 +134,35 @@ VACUUM은 기본 비활성화입니다. `CCTV_RETENTION_VACUUM_ENABLED=true`로 
 유지보수 창 안에서 `freelist_count/page_count`가 기본 25% 이상이고 빈 페이지가
 10,000개 이상일 때만 후보가 됩니다. 분석 또는 Hiperwall 작업이 실행 중이면
 건너뛰며, DB 크기의 기본 3배 이상 여유 공간을 DB와 백업 경로에서 각각 확인한 뒤
-SQLite 온라인 백업과 `quick_check`를 성공한 경우에만 VACUUM을 실행합니다. 백업은
+SQLite 온라인 백업과 전체 `integrity_check`를 성공한 경우에만 VACUUM을 실행합니다. 백업은
 `CCTV_RETENTION_VACUUM_BACKUP_DIR`에 시각별 파일로 보존됩니다. 삭제된 빈 페이지는
 VACUUM 전에도 SQLite가 새 쓰기에 재사용할 수 있으므로 즉시 파일 크기를 줄이지
 않습니다.
+
+Backend 시작 시 Supervisor보다 먼저 `running` 분석 run과 run ID가 연결된 유효
+camera lease를 원자적으로 대조합니다. 유효한 다른 Backend lease가 없는 run은
+`interrupted`/`recovered_on_startup`으로 종료하고 해당 active track을 닫습니다.
+반복 실행은 이미 종료된 run을 바꾸지 않으며 schema 19의 Hiperwall 표시 게이트와
+역사 person instance는 초기화하지 않습니다.
+
+각 Worker lease에는 현재 `analysis_run_id`가 연결됩니다. Worker 실패는
+`analysis_worker_failures` append-only 이력에 자격정보가 제거된 형태로 남고,
+`/analysis-workers`는 현재 오류와 정상화 후에도 유지되는 마지막 실패를 함께
+반환합니다. 5초 stage heartbeat를 기준으로 기본 30초 stale timeout을 적용하되,
+초기 CUDA session/model loading에는 별도 180초 grace, RTSP 재접속에는 120초 timeout을
+사용합니다. 추론·후처리·DB 저장 hang은 stage별로 분류하고 정상 종료 요청 후 timeout
+시 강제 종료합니다. 기본 5분에 5회 제한과 기존 지수 backoff로 재시작 폭주를 막습니다.
+
+실행 중 DB의 온라인 백업과 전체 무결성 점검은 Backend 컨테이너 안에서 수행합니다.
+
+```bash
+uv run cctv-db-backup
+uv run cctv-db-check
+```
+
+Windows에서 실행 중 DB나 DB/WAL/SHM을 직접 열거나 복사하지 않습니다. 상세 복원
+절차와 GPU local-volume 정책은
+[SQLite 운영 문서](../docs/architecture/SQLITE_OPERATIONS.md)를 따릅니다.
 
 현재 Backend는 `sqlite3`, SQLite migration, PRAGMA와 WAL 유지보수에 직접
 의존하므로 PostgreSQL 연결 환경변수는 지원하지 않습니다. 다중 Worker lock 오류,

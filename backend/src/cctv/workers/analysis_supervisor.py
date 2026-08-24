@@ -21,6 +21,8 @@ from uuid import uuid4
 from cctv.core.settings import Settings
 from cctv.db import (
     AnalysisLeaseRepository,
+    AnalysisRunRecoveryRepository,
+    AnalysisWorkerFailureRepository,
     CameraProvisioningStatus,
     CameraRecord,
     CameraRepository,
@@ -64,6 +66,15 @@ class AnalysisWorkerSnapshot:
     next_restart_at: datetime | None
     last_error_type: str | None
     last_message: str | None
+    current_error_type: str | None = None
+    current_error_at: datetime | None = None
+    last_failure_type: str | None = None
+    last_failure_message: str | None = None
+    last_failure_at: datetime | None = None
+    last_failure_run_id: str | None = None
+    last_heartbeat_at: datetime | None = None
+    current_stage: str | None = None
+    stage_started_at: datetime | None = None
     requested_device: str | None = None
     effective_device: str | None = None
     execution_provider: str | None = None
@@ -116,13 +127,28 @@ class _ManagedWorker:
     reconnect_count: int = 0
     restart_count: int = 0
     started_at: datetime | None = None
+    started_monotonic: float = 0.0
     last_frame_at: datetime | None = None
+    last_frame_monotonic: float | None = None
+    last_heartbeat_at: datetime | None = None
+    last_heartbeat_monotonic: float | None = None
+    current_stage: str | None = None
+    stage_started_at: datetime | None = None
+    stage_started_monotonic: float = 0.0
+    status_changed_monotonic: float = 0.0
     last_event_at: datetime | None = None
     completed_at: datetime | None = None
     next_restart_at: datetime | None = None
     next_restart_monotonic: float = 0.0
     last_error_type: str | None = None
     last_message: str | None = None
+    current_error_at: datetime | None = None
+    last_failure_type: str | None = None
+    last_failure_message: str | None = None
+    last_failure_at: datetime | None = None
+    last_failure_run_id: str | None = None
+    process_instance_id: str | None = None
+    failure_recorded: bool = False
     requested_device: str | None = None
     effective_device: str | None = None
     execution_provider: str | None = None
@@ -147,6 +173,8 @@ class AnalysisSupervisor:
         camera_repository: CameraRepository | None = None,
         rule_repository: RuleRepository | None = None,
         lease_repository: AnalysisLeaseRepository | None = None,
+        failure_repository: AnalysisWorkerFailureRepository | None = None,
+        recovery_repository: AnalysisRunRecoveryRepository | None = None,
         process_factory: ProcessFactory | None = None,
         owner_id: str | None = None,
         monotonic_clock: Clock = monotonic,
@@ -156,6 +184,12 @@ class AnalysisSupervisor:
         self.camera_repository = camera_repository or CameraRepository(settings.database_path)
         self.rule_repository = rule_repository or RuleRepository(settings.database_path)
         self.lease_repository = lease_repository or AnalysisLeaseRepository(settings.database_path)
+        self.failure_repository = failure_repository or AnalysisWorkerFailureRepository(
+            settings.database_path
+        )
+        self.recovery_repository = recovery_repository or AnalysisRunRecoveryRepository(
+            settings.database_path
+        )
         self._process_factory = process_factory or _popen
         self._owner_id = owner_id or str(uuid4())
         self._monotonic = monotonic_clock
@@ -215,6 +249,7 @@ class AnalysisSupervisor:
     def reconcile_once(self) -> None:
         """Apply one deterministic desired-state cycle; public for diagnostics and tests."""
         self._observe_exited_processes()
+        self._restart_stale_workers()
         desired = self._load_desired_workers()
         desired_by_id = {item.camera.id: item for item in desired}
 
@@ -307,10 +342,26 @@ class AnalysisSupervisor:
         with self._lock:
             entry = self._workers.get(camera.id)
             if entry is None:
+                latest_failure = self.failure_repository.latest(camera.id)
                 entry = _ManagedWorker(
                     camera_id=camera.id,
                     camera_name=camera.name,
                     stream_path=camera.stream_path,
+                    restart_count=(
+                        latest_failure.restart_count if latest_failure is not None else 0
+                    ),
+                    last_failure_type=(
+                        latest_failure.failure_type if latest_failure is not None else None
+                    ),
+                    last_failure_message=(
+                        latest_failure.failure_message if latest_failure is not None else None
+                    ),
+                    last_failure_at=(
+                        latest_failure.failure_at if latest_failure is not None else None
+                    ),
+                    last_failure_run_id=(
+                        latest_failure.analysis_run_id if latest_failure is not None else None
+                    ),
                 )
                 self._workers[camera.id] = entry
             return entry
@@ -393,12 +444,31 @@ class AnalysisSupervisor:
         if not self.settings.model_path.is_file():
             self._record_start_failure(entry, "FileNotFoundError", "detector model is missing")
             return
-        command = self._build_command(entry)
+        planned_run_id = str(uuid4())
+        process_instance_id = str(uuid4())
+        if not self.lease_repository.assign_run(
+            entry.camera_id,
+            self._owner_id,
+            planned_run_id,
+            now=self._now(),
+        ):
+            with self._lock:
+                entry.lease_owned = False
+                entry.status = AnalysisWorkerStatus.STOPPED
+                entry.last_message = "camera lease expired before the run could be assigned"
+            return
+        command = self._build_command(entry, analysis_run_id=planned_run_id)
         environment = self._worker_environment(entry)
         try:
             process = self._process_factory(command, environment)
         except Exception as error:
-            self._record_start_failure(entry, type(error).__name__, "worker process start failed")
+            self.lease_repository.clear_run(entry.camera_id, self._owner_id)
+            self._record_start_failure(
+                entry,
+                type(error).__name__,
+                "worker process start failed",
+                process_instance_id=process_instance_id,
+            )
             logger.exception(
                 "Analysis worker process could not be started",
                 extra={
@@ -413,16 +483,26 @@ class AnalysisSupervisor:
         with self._lock:
             entry.process = process
             entry.status = AnalysisWorkerStatus.STARTING
-            entry.analysis_run_id = None
+            entry.status_changed_monotonic = self._monotonic()
+            entry.analysis_run_id = planned_run_id
             entry.processed_samples = 0
             entry.connection_count = 0
             entry.reconnect_count = 0
             entry.started_at = self._now()
+            entry.started_monotonic = self._monotonic()
             entry.completed_at = None
+            entry.last_frame_at = None
+            entry.last_frame_monotonic = None
+            entry.last_heartbeat_at = None
+            entry.last_heartbeat_monotonic = None
+            entry.current_stage = "model_loading"
+            entry.stage_started_at = entry.started_at
+            entry.stage_started_monotonic = entry.started_monotonic
             entry.next_restart_at = None
             entry.next_restart_monotonic = 0.0
-            entry.last_error_type = None
             entry.last_message = "analysis worker process started"
+            entry.process_instance_id = process_instance_id
+            entry.failure_recorded = False
             entry.requested_device = self.settings.ai_device.value
             entry.effective_device = None
             entry.execution_provider = None
@@ -442,6 +522,7 @@ class AnalysisSupervisor:
                 "source_name": entry.stream_path,
                 "rule_count": entry.rule_count,
                 "restart_count": entry.restart_count,
+                "analysis_run_id": planned_run_id,
             },
         )
 
@@ -450,17 +531,20 @@ class AnalysisSupervisor:
         entry: _ManagedWorker,
         error_type: str,
         message: str,
+        process_instance_id: str | None = None,
     ) -> None:
         now = self._now()
+        self._record_failure(
+            entry,
+            error_type=error_type,
+            message=message,
+            failed_at=now,
+            process_instance_id=process_instance_id or str(uuid4()),
+        )
+        self._schedule_restart(entry, failed_at=now)
         with self._lock:
             entry.status = AnalysisWorkerStatus.FAILED
-            entry.last_error_type = error_type
-            entry.last_message = message
             entry.completed_at = now
-            entry.restart_count += 1
-            delay = self._restart_delay(entry.restart_count)
-            entry.next_restart_monotonic = self._monotonic() + delay
-            entry.next_restart_at = now + timedelta(seconds=delay)
 
     def _observe_exited_processes(self) -> None:
         with self._lock:
@@ -479,15 +563,32 @@ class AnalysisSupervisor:
             with self._lock:
                 if entry.process is not process:
                     continue
+                failure_recorded = entry.failure_recorded
+                error_type = f"ProcessExit{return_code}"
+                process_instance_id = entry.process_instance_id or str(uuid4())
+                analysis_run_id = entry.analysis_run_id
+            if not failure_recorded:
+                self._record_failure(
+                    entry,
+                    error_type=error_type,
+                    message="analysis worker exited unexpectedly",
+                    failed_at=now,
+                    process_instance_id=process_instance_id,
+                )
+                self._schedule_restart(entry, failed_at=now)
+            if analysis_run_id is not None:
+                self.recovery_repository.interrupt_run(
+                    analysis_run_id,
+                    reason="worker_process_lost",
+                    now=now,
+                )
+            with self._lock:
+                if entry.process is not process:
+                    continue
                 entry.process = None
                 entry.status = AnalysisWorkerStatus.FAILED
+                entry.status_changed_monotonic = self._monotonic()
                 entry.completed_at = now
-                entry.restart_count += 1
-                entry.last_error_type = entry.last_error_type or f"ProcessExit{return_code}"
-                entry.last_message = "analysis worker exited unexpectedly"
-                delay = self._restart_delay(entry.restart_count)
-                entry.next_restart_monotonic = self._monotonic() + delay
-                entry.next_restart_at = now + timedelta(seconds=delay)
             logger.warning(
                 "Analysis worker exited unexpectedly",
                 extra={
@@ -510,24 +611,47 @@ class AnalysisSupervisor:
             process = entry.process
             if process is None:
                 return
+            analysis_run_id = entry.analysis_run_id
             entry.status = AnalysisWorkerStatus.STOPPING
+            entry.status_changed_monotonic = self._monotonic()
             entry.last_message = reason
+        forced = False
         try:
             if process.poll() is None:
                 process.terminate()
                 try:
                     process.wait(timeout=self.settings.analysis_supervisor_shutdown_timeout_seconds)
                 except subprocess.TimeoutExpired:
+                    forced = True
                     process.kill()
                     process.wait(timeout=5)
         finally:
+            stopped_at = self._now()
+            lifecycle_interrupted = forced or reason in {"lease_lost", "supervisor_shutdown"}
+            if lifecycle_interrupted and analysis_run_id is not None:
+                self.recovery_repository.interrupt_run(
+                    analysis_run_id,
+                    reason=(
+                        f"{reason}_forced_termination"
+                        if forced
+                        else "backend_shutdown"
+                        if reason == "supervisor_shutdown"
+                        else reason
+                    ),
+                    now=stopped_at,
+                    include_stopped=True,
+                )
             with self._lock:
                 if entry.process is process:
                     entry.process = None
                     entry.status = AnalysisWorkerStatus.STOPPED
-                    entry.completed_at = self._now()
+                    entry.status_changed_monotonic = self._monotonic()
+                    entry.completed_at = stopped_at
                     entry.next_restart_at = None
                     entry.next_restart_monotonic = 0.0
+                    if not forced:
+                        entry.last_error_type = None
+                        entry.current_error_at = None
             logger.info(
                 "Analysis worker stopped",
                 extra={
@@ -535,6 +659,7 @@ class AnalysisSupervisor:
                     "camera_id": entry.camera_id,
                     "source_name": entry.stream_path,
                     "reason": reason,
+                    "forced": forced,
                 },
             )
             if release_lease:
@@ -568,12 +693,18 @@ class AnalysisSupervisor:
         record: dict[str, Any],
     ) -> None:
         event = record.get("event")
+        now = self._now()
+        now_monotonic = self._monotonic()
+        failure: tuple[str, str, str] | None = None
+        reported_run_id: str | None = None
         with self._lock:
             entry = self._workers.get(camera_id)
             if entry is None or entry.process is not process:
                 return
             if event == "analysis_run_created":
-                entry.analysis_run_id = _optional_text(record.get("analysis_run_id"))
+                reported_run_id = _optional_text(record.get("analysis_run_id"))
+                if reported_run_id is not None:
+                    entry.analysis_run_id = reported_run_id
             elif event == "detector_runtime_resolved":
                 entry.requested_device = _optional_text(record.get("requested_device"))
                 entry.effective_device = _optional_text(record.get("effective_device"))
@@ -582,42 +713,109 @@ class AnalysisSupervisor:
                 entry.fallback_reason = _optional_text(record.get("fallback_reason"))
             elif event == "rtsp_worker_started":
                 entry.status = AnalysisWorkerStatus.STARTING
+                entry.status_changed_monotonic = now_monotonic
                 entry.last_message = "waiting for RTSP stream"
             elif event == "rtsp_source_connected":
                 entry.status = AnalysisWorkerStatus.RUNNING
+                entry.status_changed_monotonic = now_monotonic
                 entry.connection_count = _integer(record.get("connection_count"))
                 entry.last_message = "RTSP stream connected"
+                entry.last_heartbeat_at = now
+                entry.last_heartbeat_monotonic = now_monotonic
+                entry.last_error_type = None
+                entry.current_error_at = None
             elif event == "rtsp_source_reconnect_scheduled":
                 entry.status = AnalysisWorkerStatus.RECONNECTING
+                entry.status_changed_monotonic = now_monotonic
                 entry.reconnect_count = _integer(record.get("reconnect_count"))
                 entry.last_message = "RTSP reconnect scheduled"
-            elif event == "rtsp_worker_progress":
-                entry.processed_samples = _integer(record.get("processed_samples"))
-                progress_status = _optional_text(record.get("status"))
-                if progress_status in (None, "running") and entry.processed_samples > 0:
-                    entry.status = AnalysisWorkerStatus.RUNNING
+                entry.last_heartbeat_at = now
+                entry.last_heartbeat_monotonic = now_monotonic
+            elif event in {"rtsp_worker_progress", "rtsp_worker_heartbeat"}:
+                entry.last_heartbeat_at = now
+                entry.last_heartbeat_monotonic = now_monotonic
+                if event == "rtsp_worker_progress":
+                    entry.processed_samples = _integer(record.get("processed_samples"))
+                    progress_status = _optional_text(record.get("status"))
+                    if progress_status in (None, "running") and entry.processed_samples > 0:
+                        entry.status = AnalysisWorkerStatus.RUNNING
+                        entry.status_changed_monotonic = now_monotonic
+                        entry.last_error_type = None
+                        entry.current_error_at = None
+                else:
+                    stage = _optional_text(record.get("stage"))
+                    stage_started_at = _optional_datetime(record.get("stage_started_at"))
+                    if stage is not None and (
+                        stage != entry.current_stage
+                        or stage_started_at != entry.stage_started_at
+                    ):
+                        entry.current_stage = stage
+                        entry.stage_started_at = stage_started_at or now
+                        entry.stage_started_monotonic = now_monotonic
                 reported_last_frame_at = _optional_datetime(record.get("last_frame_at"))
-                if reported_last_frame_at is not None:
+                if reported_last_frame_at is not None and (
+                    entry.last_frame_at is None
+                    or reported_last_frame_at > entry.last_frame_at
+                ):
                     entry.last_frame_at = reported_last_frame_at
+                    entry.last_frame_monotonic = now_monotonic
                 elif "last_frame_at" not in record and entry.processed_samples > 0:
-                    entry.last_frame_at = self._now()
+                    entry.last_frame_at = now
+                    entry.last_frame_monotonic = now_monotonic
             elif event == "rule_event_emitted":
-                entry.last_event_at = self._now()
+                entry.last_event_at = now
             elif event == "rtsp_worker_failed":
-                entry.last_error_type = _optional_text(record.get("error_type")) or "WorkerError"
-                entry.last_message = "RTSP worker failed"
+                failure = (
+                    _optional_text(record.get("error_type")) or "WorkerError",
+                    _optional_text(record.get("error_message")) or "RTSP worker failed",
+                    entry.process_instance_id or str(uuid4()),
+                )
             elif event == "rtsp_worker_finished":
                 entry.processed_samples = _integer(record.get("processed_samples"))
                 entry.connection_count = _integer(record.get("connection_count"))
                 entry.reconnect_count = _integer(record.get("reconnect_count"))
 
-    def _build_command(self, entry: _ManagedWorker) -> list[str]:
+        if reported_run_id is not None and not self.lease_repository.assign_run(
+                camera_id,
+                self._owner_id,
+                reported_run_id,
+                now=now,
+        ):
+            logger.error(
+                "Analysis run could not be bound to its camera lease",
+                extra={
+                    "event": "analysis_run_lease_binding_failed",
+                    "camera_id": camera_id,
+                    "analysis_run_id": reported_run_id,
+                },
+            )
+        if failure is not None:
+            error_type, message, process_instance_id = failure
+            self._record_failure(
+                entry,
+                error_type=error_type,
+                message=message,
+                failed_at=now,
+                process_instance_id=process_instance_id,
+            )
+            self._schedule_restart(entry, failed_at=now)
+
+    def _build_command(
+        self,
+        entry: _ManagedWorker,
+        *,
+        analysis_run_id: str,
+    ) -> list[str]:
         command = [
             sys.executable,
             "-c",
             "from cctv.workers.rtsp import run; run()",
             "--source-name",
             entry.stream_path,
+            "--camera-id",
+            str(entry.camera_id),
+            "--analysis-run-id",
+            analysis_run_id,
             "--sample-fps",
             str(self.settings.analysis_fps),
             "--analyze",
@@ -651,6 +849,9 @@ class AnalysisSupervisor:
                 ).lower(),
                 "CCTV_AI_CUDA_DEVICE_ID": str(self.settings.ai_cuda_device_id),
                 "CCTV_ANALYSIS_FPS": str(self.settings.analysis_fps),
+                "CCTV_ANALYSIS_WORKER_HEARTBEAT_INTERVAL_SECONDS": str(
+                    self.settings.analysis_worker_heartbeat_interval_seconds
+                ),
                 "CCTV_ANALYSIS_SUPERVISOR_ENABLED": "false",
                 "CCTV_DATABASE_PATH": str(self.settings.database_path),
                 "CCTV_MODEL_PATH": str(self.settings.model_path),
@@ -716,6 +917,202 @@ class AnalysisSupervisor:
             )
         return environment
 
+    def _record_failure(
+        self,
+        entry: _ManagedWorker,
+        *,
+        error_type: str,
+        message: str,
+        failed_at: datetime,
+        process_instance_id: str,
+    ) -> bool:
+        with self._lock:
+            if (
+                entry.process_instance_id == process_instance_id
+                and entry.failure_recorded
+            ):
+                return False
+            restart_count = entry.restart_count + 1
+            analysis_run_id = entry.analysis_run_id
+            if entry.process_instance_id == process_instance_id:
+                entry.failure_recorded = True
+            entry.restart_count = restart_count
+            entry.last_error_type = error_type
+            entry.current_error_at = failed_at
+            entry.last_message = message
+
+        record = self.failure_repository.record(
+            camera_id=entry.camera_id,
+            analysis_run_id=analysis_run_id,
+            owner_id=self._owner_id,
+            process_instance_id=process_instance_id,
+            failure_type=error_type,
+            failure_message=message,
+            failure_at=failed_at,
+            restart_count=restart_count,
+        )
+        with self._lock:
+            entry.last_failure_type = record.failure_type
+            entry.last_failure_message = record.failure_message
+            entry.last_failure_at = record.failure_at
+            entry.last_failure_run_id = record.analysis_run_id
+        logger.warning(
+            "Analysis worker failure persisted",
+            extra={
+                "event": "analysis_worker_failure_persisted",
+                "camera_id": entry.camera_id,
+                "analysis_run_id": analysis_run_id,
+                "failure_type": record.failure_type,
+                "restart_count": record.restart_count,
+            },
+        )
+        return True
+
+    def _schedule_restart(self, entry: _ManagedWorker, *, failed_at: datetime) -> None:
+        window_seconds = self.settings.analysis_supervisor_restart_window_seconds
+        recent = self.failure_repository.list_since(
+            entry.camera_id,
+            since=failed_at - timedelta(seconds=window_seconds),
+        )
+        with self._lock:
+            delay = self._restart_delay(entry.restart_count)
+            rate_limited = (
+                len(recent) >= self.settings.analysis_supervisor_max_restarts_in_window
+            )
+            if rate_limited:
+                window_ready_at = recent[0].failure_at + timedelta(seconds=window_seconds)
+                delay = max(delay, (window_ready_at - failed_at).total_seconds())
+                entry.last_message = "worker restart rate limit reached"
+            entry.next_restart_monotonic = self._monotonic() + max(delay, 0.0)
+            entry.next_restart_at = failed_at + timedelta(seconds=max(delay, 0.0))
+        if rate_limited:
+            logger.error(
+                "Analysis worker restart was rate limited",
+                extra={
+                    "event": "analysis_worker_restart_rate_limited",
+                    "camera_id": entry.camera_id,
+                    "recent_failure_count": len(recent),
+                    "window_seconds": window_seconds,
+                    "next_restart_at": entry.next_restart_at,
+                },
+            )
+
+    def _restart_stale_workers(self) -> None:
+        with self._lock:
+            active = tuple(
+                (entry, entry.process)
+                for entry in self._workers.values()
+                if entry.process is not None
+            )
+        for entry, process in active:
+            if process is None or process.poll() is not None:
+                continue
+            reason = self._stale_reason(entry)
+            if reason is not None:
+                self._restart_stale_worker(entry, process, reason=reason)
+
+    def _stale_reason(self, entry: _ManagedWorker) -> str | None:
+        now_monotonic = self._monotonic()
+        with self._lock:
+            if entry.process is None:
+                return None
+            process_age = max(0.0, now_monotonic - entry.started_monotonic)
+            heartbeat_age = (
+                max(0.0, now_monotonic - entry.last_heartbeat_monotonic)
+                if entry.last_heartbeat_monotonic is not None
+                else None
+            )
+            frame_age = (
+                max(0.0, now_monotonic - entry.last_frame_monotonic)
+                if entry.last_frame_monotonic is not None
+                else None
+            )
+            stage_age = max(0.0, now_monotonic - entry.stage_started_monotonic)
+            stage = entry.current_stage
+            status = entry.status
+            status_age = max(0.0, now_monotonic - entry.status_changed_monotonic)
+
+        initial_grace = self.settings.analysis_supervisor_initial_grace_seconds
+        stale_timeout = self.settings.analysis_supervisor_stale_timeout_seconds
+        if heartbeat_age is None:
+            return "model_loading_stalled" if process_age >= initial_grace else None
+        if stage == "model_loading" and stage_age >= initial_grace:
+            return "model_loading_stalled"
+        if (
+            stage in {"inference", "postprocessing", "database_save"}
+            and stage_age >= stale_timeout
+        ):
+            return f"{stage}_stalled"
+        if status is AnalysisWorkerStatus.RECONNECTING:
+            if status_age >= self.settings.analysis_supervisor_reconnect_stale_timeout_seconds:
+                return "rtsp_reconnect_stalled"
+            return None
+        if heartbeat_age >= stale_timeout:
+            return "worker_heartbeat_stale"
+        if status is AnalysisWorkerStatus.RUNNING:
+            if frame_age is None:
+                return "frame_start_stalled" if process_age >= initial_grace else None
+            if frame_age >= stale_timeout:
+                return "frame_stalled"
+        return None
+
+    def _restart_stale_worker(
+        self,
+        entry: _ManagedWorker,
+        process: ManagedProcess,
+        *,
+        reason: str,
+    ) -> None:
+        failed_at = self._now()
+        with self._lock:
+            if entry.process is not process:
+                return
+            process_instance_id = entry.process_instance_id or str(uuid4())
+            analysis_run_id = entry.analysis_run_id
+        recorded = self._record_failure(
+            entry,
+            error_type=reason,
+            message=f"watchdog detected {reason}",
+            failed_at=failed_at,
+            process_instance_id=process_instance_id,
+        )
+        if recorded:
+            self._schedule_restart(entry, failed_at=failed_at)
+
+        forced = False
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=self.settings.analysis_supervisor_shutdown_timeout_seconds)
+            except subprocess.TimeoutExpired:
+                forced = True
+                process.kill()
+                process.wait(timeout=5)
+        if analysis_run_id is not None:
+            self.recovery_repository.interrupt_run(
+                analysis_run_id,
+                reason=f"watchdog_{reason}",
+                now=self._now(),
+                include_stopped=True,
+            )
+        with self._lock:
+            if entry.process is process:
+                entry.process = None
+                entry.status = AnalysisWorkerStatus.FAILED
+                entry.status_changed_monotonic = self._monotonic()
+                entry.completed_at = self._now()
+        logger.error(
+            "Stale analysis worker was restarted",
+            extra={
+                "event": "analysis_worker_watchdog_restart",
+                "camera_id": entry.camera_id,
+                "analysis_run_id": analysis_run_id,
+                "failure_type": reason,
+                "forced_termination": forced,
+                "restart_count": entry.restart_count,
+            },
+        )
+
     def _restart_delay(self, restart_count: int) -> float:
         return min(
             self.settings.analysis_supervisor_restart_max_seconds,
@@ -746,6 +1143,15 @@ class AnalysisSupervisor:
             next_restart_at=entry.next_restart_at,
             last_error_type=entry.last_error_type,
             last_message=entry.last_message,
+            current_error_type=entry.last_error_type,
+            current_error_at=entry.current_error_at,
+            last_failure_type=entry.last_failure_type,
+            last_failure_message=entry.last_failure_message,
+            last_failure_at=entry.last_failure_at,
+            last_failure_run_id=entry.last_failure_run_id,
+            last_heartbeat_at=entry.last_heartbeat_at,
+            current_stage=entry.current_stage,
+            stage_started_at=entry.stage_started_at,
             requested_device=entry.requested_device,
             effective_device=entry.effective_device,
             execution_provider=entry.execution_provider,

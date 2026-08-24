@@ -114,6 +114,7 @@ class Settings(BaseSettings):
     retention_vacuum_min_freelist_pages: int = Field(default=10_000, ge=1, le=10_000_000)
     retention_vacuum_free_space_multiplier: float = Field(default=3.0, ge=2.0, le=10.0)
     retention_vacuum_backup_dir: Path = Path("runtime/backups/pre-vacuum")
+    database_backup_dir: Path = Path("runtime/backups/manual")
     analysis_supervisor_enabled: bool = False
     analysis_supervisor_reconcile_interval_seconds: float = Field(default=5.0, ge=1, le=300)
     analysis_supervisor_max_workers: int = Field(default=2, ge=1, le=64)
@@ -121,6 +122,16 @@ class Settings(BaseSettings):
     analysis_supervisor_restart_max_seconds: float = Field(default=60.0, gt=0, le=3_600)
     analysis_supervisor_shutdown_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
     analysis_supervisor_lease_seconds: float = Field(default=20.0, ge=5, le=3_600)
+    analysis_worker_heartbeat_interval_seconds: float = Field(default=5.0, ge=1, le=60)
+    analysis_supervisor_initial_grace_seconds: float = Field(default=180.0, ge=30, le=1_800)
+    analysis_supervisor_stale_timeout_seconds: float = Field(default=30.0, ge=10, le=600)
+    analysis_supervisor_reconnect_stale_timeout_seconds: float = Field(
+        default=120.0,
+        ge=30,
+        le=3_600,
+    )
+    analysis_supervisor_restart_window_seconds: float = Field(default=300.0, ge=60, le=86_400)
+    analysis_supervisor_max_restarts_in_window: int = Field(default=5, ge=1, le=100)
     hiperwall_dry_run_enabled: bool = True
     hiperwall_executor_enabled: bool = True
     host: str = "127.0.0.1"
@@ -304,6 +315,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "database_path",
+        "database_backup_dir",
         "model_path",
         "log_path",
         "snapshot_dir",
@@ -450,6 +462,30 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CCTV_ANALYSIS_SUPERVISOR_LEASE_SECONDS must be greater than twice "
                 "CCTV_ANALYSIS_SUPERVISOR_RECONCILE_INTERVAL_SECONDS"
+            )
+        if (
+            self.analysis_supervisor_stale_timeout_seconds
+            < self.analysis_worker_heartbeat_interval_seconds * 3
+        ):
+            raise ValueError(
+                "CCTV_ANALYSIS_SUPERVISOR_STALE_TIMEOUT_SECONDS must be at least three "
+                "times CCTV_ANALYSIS_WORKER_HEARTBEAT_INTERVAL_SECONDS"
+            )
+        if (
+            self.analysis_supervisor_reconnect_stale_timeout_seconds
+            < self.analysis_supervisor_stale_timeout_seconds
+        ):
+            raise ValueError(
+                "CCTV_ANALYSIS_SUPERVISOR_RECONNECT_STALE_TIMEOUT_SECONDS must be greater "
+                "than or equal to CCTV_ANALYSIS_SUPERVISOR_STALE_TIMEOUT_SECONDS"
+            )
+        if (
+            self.analysis_supervisor_initial_grace_seconds
+            < self.analysis_supervisor_stale_timeout_seconds
+        ):
+            raise ValueError(
+                "CCTV_ANALYSIS_SUPERVISOR_INITIAL_GRACE_SECONDS must be greater than or "
+                "equal to CCTV_ANALYSIS_SUPERVISOR_STALE_TIMEOUT_SECONDS"
             )
         unavailable_tracker_classes = self.tracker_class_name_set - self.detection_class_name_set
         if unavailable_tracker_classes:

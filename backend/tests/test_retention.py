@@ -438,7 +438,7 @@ def test_retention_repository_runs_checkpoint_and_verified_online_backup(
     assert backup_path.is_file()
     with closing(connect_database(backup_path)) as connection:
         assert connection.execute("PRAGMA quick_check").fetchone()[0] == "ok"
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 20
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 21
 
 
 def test_conditional_vacuum_uses_window_backup_space_and_threshold(tmp_path: Path) -> None:

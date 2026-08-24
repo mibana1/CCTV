@@ -43,6 +43,11 @@ API 확인 주소는 `http://127.0.0.1:8000/health`입니다.
 시작할 때 SQLite 파일과 미적용 스키마 마이그레이션을 초기화합니다.
 기본 SQLite 경로는 `runtime/cctv.db`입니다.
 
+실행 중 SQLite의 점검·백업과 GPU 서버 저장소 배치 원칙은
+[SQLite 운영 문서](docs/architecture/SQLITE_OPERATIONS.md)를 따릅니다. 실행 중에는
+Windows에서 DB/WAL/SHM을 직접 열거나 복사하지 않고 Backend 컨테이너의
+`cctv-db-backup`, `cctv-db-check` 관리 명령을 사용합니다.
+
 Backend 애플리케이션 로그는 stdout과 `runtime/logs/cctv.jsonl`에 JSONL로
 기록됩니다. 기본 회전 기준은 10MiB와 백업 5개이며 `.env`에서 조정할 수
 있습니다. RTSP 사용자정보, 비밀번호, Token, Authorization, Cookie와 인증

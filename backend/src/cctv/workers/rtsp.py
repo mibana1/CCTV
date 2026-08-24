@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from math import isfinite
 from pathlib import Path
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 from time import monotonic
 from types import FrameType
 
@@ -90,6 +90,78 @@ class RtspWorkerResult:
     connection_count: int
     reconnect_count: int
     decoded_frames: int
+
+
+class RtspStageHeartbeat:
+    """Emit stage-aware heartbeats even while inference or SQLite calls are blocked."""
+
+    def __init__(self, *, interval_seconds: float) -> None:
+        self.interval_seconds = interval_seconds
+        self._lock = Lock()
+        self._stop_event = Event()
+        self._thread: Thread | None = None
+        self._stage = "model_loading"
+        self._stage_started_at = datetime.now(UTC)
+        self._analysis_run_id: str | None = None
+        self._last_frame_at: datetime | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._emit(reason="started")
+        self._thread = Thread(
+            target=self._run,
+            name="rtsp-stage-heartbeat",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        if self._stop_event.is_set():
+            return
+        self._stop_event.set()
+        self.set_stage("finished")
+        self._emit(reason="finished")
+        if self._thread is not None:
+            self._thread.join(timeout=2)
+
+    def set_stage(self, stage: str) -> None:
+        with self._lock:
+            if self._stage == stage:
+                return
+            self._stage = stage
+            self._stage_started_at = datetime.now(UTC)
+
+    def set_analysis_run_id(self, analysis_run_id: str) -> None:
+        with self._lock:
+            self._analysis_run_id = analysis_run_id
+
+    def frame_completed(self) -> None:
+        with self._lock:
+            self._last_frame_at = datetime.now(UTC)
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.interval_seconds):
+            self._emit(reason="interval")
+
+    def _emit(self, *, reason: str) -> None:
+        with self._lock:
+            stage = self._stage
+            stage_started_at = self._stage_started_at
+            analysis_run_id = self._analysis_run_id
+            last_frame_at = self._last_frame_at
+        logger.info(
+            "RTSP worker stage heartbeat",
+            extra={
+                "event": "rtsp_worker_heartbeat",
+                "reason": reason,
+                "stage": stage,
+                "stage_started_at": _format_timestamp(stage_started_at),
+                "analysis_run_id": analysis_run_id,
+                "last_frame_at": _format_timestamp(last_frame_at),
+                "heartbeat_interval_seconds": self.interval_seconds,
+            },
+        )
 
 
 class RtspWorker:
@@ -254,6 +326,7 @@ class RtspWorker:
                     "source_name": self.reader.source_name,
                     "processed_samples": processed_samples,
                     "error_type": type(error).__name__,
+                    "error_message": str(error),
                 },
             )
             raise
@@ -318,6 +391,8 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Analyze a reconnecting RTSP stream")
     parser.add_argument("--rtsp-url")
     parser.add_argument("--source-name")
+    parser.add_argument("--camera-id", type=positive_integer, help=argparse.SUPPRESS)
+    parser.add_argument("--analysis-run-id", help=argparse.SUPPRESS)
     parser.add_argument("--sample-fps", type=float)
     parser.add_argument("--max-samples", type=positive_integer)
     parser.add_argument("--emit-progress", action="store_true", help=argparse.SUPPRESS)
@@ -386,6 +461,15 @@ def run(argv: Sequence[str] | None = None) -> None:
         backup_count=settings.log_backup_count,
         service="cctv-rtsp-worker",
     )
+    stage_heartbeat = (
+        RtspStageHeartbeat(
+            interval_seconds=settings.analysis_worker_heartbeat_interval_seconds
+        )
+        if arguments.emit_progress
+        else None
+    )
+    if stage_heartbeat is not None:
+        stage_heartbeat.start()
     try:
         consumers: list[FrameConsumer] = []
         detector: ObjectDetector | None = None
@@ -456,7 +540,11 @@ def run(argv: Sequence[str] | None = None) -> None:
                     confidence_threshold=metadata.confidence_threshold,
                     nms_threshold=metadata.nms_threshold,
                     sample_fps=effective_sample_fps,
+                    camera_id=arguments.camera_id,
+                    run_id=arguments.analysis_run_id,
                 )
+                if stage_heartbeat is not None:
+                    stage_heartbeat.set_analysis_run_id(analysis_run.id)
                 if settings.rules_enabled and tracker is not None:
                     definitions = RuleRepository(settings.database_path).list_rule_definitions(
                         source_name=source_name
@@ -493,7 +581,11 @@ def run(argv: Sequence[str] | None = None) -> None:
                 nonlocal simulated_hiperwall_actions
                 nonlocal queued_hiperwall_actions
 
+                if stage_heartbeat is not None:
+                    stage_heartbeat.set_stage("inference")
                 raw_result = detector.analyze(frame)
+                if stage_heartbeat is not None:
+                    stage_heartbeat.set_stage("postprocessing")
                 result = filter_detections_by_class(
                     raw_result,
                     settings.detection_class_name_list,
@@ -538,6 +630,8 @@ def run(argv: Sequence[str] | None = None) -> None:
                     has_display_actions=bool(display_actions),
                 )
                 if repository is not None and analysis_run is not None and should_persist_frame:
+                    if stage_heartbeat is not None:
+                        stage_heartbeat.set_stage("database_save")
                     outcome = repository.save_frame_with_outcome(
                         analysis_run.id,
                         result,
@@ -575,6 +669,9 @@ def run(argv: Sequence[str] | None = None) -> None:
                     queued_hiperwall_actions += len(display_actions)
                 else:
                     simulated_hiperwall_actions += len(display_actions)
+                if stage_heartbeat is not None:
+                    stage_heartbeat.frame_completed()
+                    stage_heartbeat.set_stage("waiting_for_frame")
 
             consumers.append(analyze_frame)
 
@@ -643,6 +740,8 @@ def run(argv: Sequence[str] | None = None) -> None:
             max_samples=max_samples,
             emit_progress=arguments.emit_progress,
         )
+        if stage_heartbeat is not None:
+            stage_heartbeat.set_stage("waiting_for_frame")
 
         def request_stop(signum: int, frame: FrameType | None) -> None:
             del signum, frame
@@ -733,6 +832,10 @@ def run(argv: Sequence[str] | None = None) -> None:
                     **asdict(face_matching_consumer.summary),
                 },
             )
+        if stage_heartbeat is not None:
+            stage_heartbeat.stop()
         print(json.dumps(output, default=str, ensure_ascii=False, sort_keys=True))
     finally:
+        if stage_heartbeat is not None:
+            stage_heartbeat.stop()
         shutdown_logging()

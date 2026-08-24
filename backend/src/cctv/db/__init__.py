@@ -1,6 +1,18 @@
 """Database connections, schemas, repositories, and migrations."""
 
-from cctv.db.analysis_leases import AnalysisLeaseRepository
+from cctv.db.admin import (
+    DatabaseBackupResult,
+    DatabaseCheckResult,
+    check_database,
+    create_online_backup,
+)
+from cctv.db.analysis_leases import AnalysisLeaseRecord, AnalysisLeaseRepository
+from cctv.db.analysis_workers import (
+    AnalysisRunRecoveryRepository,
+    AnalysisRunRecoveryResult,
+    AnalysisWorkerFailureRecord,
+    AnalysisWorkerFailureRepository,
+)
 from cctv.db.cameras import (
     CameraPage,
     CameraProvisioningStatus,
@@ -89,16 +101,23 @@ __all__ = [
     "MAX_EMBEDDING_DIMENSIONS",
     "MAX_PAGE_SIZE",
     "MIN_EMBEDDING_DIMENSIONS",
+    "AnalysisLeaseRecord",
     "AnalysisLeaseRepository",
     "AnalysisRunPage",
     "AnalysisRunRecord",
+    "AnalysisRunRecoveryRepository",
+    "AnalysisRunRecoveryResult",
     "AnalysisRunStatus",
+    "AnalysisWorkerFailureRecord",
+    "AnalysisWorkerFailureRepository",
     "CameraPage",
     "CameraProvisioningStatus",
     "CameraRecord",
     "CameraRepository",
     "CameraSourceRecord",
     "DatabaseActivity",
+    "DatabaseBackupResult",
+    "DatabaseCheckResult",
     "DatabaseHealth",
     "DatabaseState",
     "DetectionPage",
@@ -142,8 +161,10 @@ __all__ = [
     "TrackPage",
     "TrackRecord",
     "WalCheckpointResult",
+    "check_database",
     "check_database_health",
     "connect_database",
+    "create_online_backup",
     "initialize_database",
     "normalize_embedding",
     "validate_stream_path",

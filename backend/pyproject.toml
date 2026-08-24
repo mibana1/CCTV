@@ -21,6 +21,8 @@ cctv-local-worker = "cctv.workers.local_video:run"
 cctv-rtsp-worker = "cctv.workers.rtsp:run"
 cctv-retention = "cctv.workers.retention:run"
 cctv-register-faces = "cctv.identity.cli:run"
+cctv-db-backup = "cctv.db.admin:run_backup"
+cctv-db-check = "cctv.db.admin:run_check"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]

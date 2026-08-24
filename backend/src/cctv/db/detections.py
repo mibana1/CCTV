@@ -33,6 +33,7 @@ class AnalysisRunStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     STOPPED = "stopped"
+    INTERRUPTED = "interrupted"
     FAILED = "failed"
 
 
@@ -58,6 +59,7 @@ class AnalysisRunRecord:
     processed_frames: int
     total_detections: int
     error_type: str | None
+    completion_reason: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,6 +412,7 @@ class DetectionRepository:
         *,
         status: AnalysisRunStatus,
         error_type: str | None = None,
+        completion_reason: str | None = None,
     ) -> AnalysisRunRecord:
         """Finish one running analysis and derive persisted aggregate counts."""
         if status is AnalysisRunStatus.RUNNING:
@@ -433,7 +436,7 @@ class DetectionRepository:
                 """
                     UPDATE analysis_runs
                     SET status = ?, completed_at = ?, processed_frames = ?,
-                        total_detections = ?, error_type = ?
+                        total_detections = ?, error_type = ?, completion_reason = ?
                     WHERE id = ? AND status = 'running'
                     """,
                 (
@@ -442,6 +445,7 @@ class DetectionRepository:
                     int(counts["processed_frames"]),
                     int(counts["total_detections"]),
                     error_type if status is AnalysisRunStatus.FAILED else None,
+                    _optional_reason(completion_reason),
                     analysis_run_id,
                 ),
             )
@@ -921,7 +925,19 @@ def _analysis_run_from_row(row: sqlite3.Row) -> AnalysisRunRecord:
         processed_frames=int(row["processed_frames"]),
         total_detections=int(row["total_detections"]),
         error_type=str(row["error_type"]) if row["error_type"] is not None else None,
+        completion_reason=(
+            str(row["completion_reason"]) if row["completion_reason"] is not None else None
+        ),
     )
+
+
+def _optional_reason(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    if not normalized:
+        return None
+    return normalized[:128]
 
 
 def _detection_from_row(row: sqlite3.Row) -> DetectionRecord:

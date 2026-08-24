@@ -10,6 +10,13 @@ services:
       CCTV_AI_ALLOW_CPU_FALLBACK: ${CCTV_AI_ALLOW_CPU_FALLBACK:-false}
       CCTV_AI_CUDA_DEVICE_ID: ${CCTV_AI_CUDA_DEVICE_ID:-0}
       CCTV_AI_CUDA_GPU_MEM_LIMIT_MB: ${CCTV_AI_CUDA_GPU_MEM_LIMIT_MB:-}
+      CCTV_DATABASE_BACKUP_DIR: /backups/manual
+      CCTV_RETENTION_VACUUM_BACKUP_DIR: /backups/pre-vacuum
+      CCTV_SNAPSHOT_DIR: /snapshots
+    volumes:
+      - cctv-gpu-runtime:/runtime
+      - cctv-gpu-snapshots:/snapshots
+      - cctv-gpu-backups:/backups
     deploy:
       resources:
         reservations:
@@ -17,3 +24,8 @@ services:
             - driver: nvidia
               count: 1
               capabilities: [gpu]
+
+volumes:
+  cctv-gpu-runtime:
+  cctv-gpu-snapshots:
+  cctv-gpu-backups:

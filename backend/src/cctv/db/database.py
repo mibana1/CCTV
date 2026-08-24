@@ -99,6 +99,7 @@ def initialize_database(database_path: Path) -> DatabaseState:
                     (migration.version, migration.name),
                 )
                 connection.execute(f"PRAGMA user_version = {migration.version}")
+            connection.execute("PRAGMA foreign_keys = ON")
             newly_applied.append(migration.version)
             logger.info(
                 "Database migration applied",

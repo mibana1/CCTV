@@ -151,9 +151,9 @@ class RetentionRepository:
             ):
                 source.backup(target)
                 target.commit()
-                quick_check = target.execute("PRAGMA quick_check").fetchone()
-                if quick_check is None or str(quick_check[0]).lower() != "ok":
-                    raise RuntimeError("online retention backup failed SQLite quick_check")
+                integrity_check = target.execute("PRAGMA integrity_check").fetchall()
+                if len(integrity_check) != 1 or str(integrity_check[0][0]).lower() != "ok":
+                    raise RuntimeError("online retention backup failed SQLite integrity_check")
             partial_path.replace(final_path)
             completed = True
             return final_path

@@ -1,4 +1,5 @@
 import json
+import subprocess
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -10,8 +11,12 @@ from fastapi.testclient import TestClient
 from cctv.core.settings import Settings
 from cctv.db import (
     AnalysisLeaseRepository,
+    AnalysisRunStatus,
+    AnalysisWorkerFailureRepository,
     CameraRepository,
+    DetectionRepository,
     RuleRepository,
+    connect_database,
     initialize_database,
 )
 from cctv.main import create_app
@@ -49,6 +54,16 @@ class FakeProcess:
         del timeout
         if self.return_code is None:
             self.return_code = 0
+        return self.return_code
+
+
+class HangingFakeProcess(FakeProcess):
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.return_code is None:
+            raise subprocess.TimeoutExpired("analysis-worker", timeout)
         return self.return_code
 
 
@@ -447,3 +462,223 @@ def test_two_supervisors_do_not_start_duplicate_camera_workers(tmp_path: Path) -
     assert len(second_launches) == 1
     assert second.snapshot().items[0].lease_owned is True
     second.stop()
+
+
+def test_watchdog_does_not_restart_fresh_heartbeat_but_restarts_database_hang(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    base_time = datetime(2026, 8, 21, 8, tzinfo=UTC)
+    settings = _settings(
+        tmp_path,
+        analysis_worker_heartbeat_interval_seconds=1,
+        analysis_supervisor_stale_timeout_seconds=10,
+        analysis_supervisor_initial_grace_seconds=30,
+        analysis_supervisor_reconnect_stale_timeout_seconds=30,
+        analysis_supervisor_shutdown_timeout_seconds=1,
+    )
+    initialize_database(settings.database_path)
+    cameras = CameraRepository(settings.database_path)
+    rules = RuleRepository(settings.database_path)
+    camera = cameras.create_camera(name="Lobby", stream_path="lobby")
+    _create_color_rule(rules, camera.stream_path, "Rule")
+    processes: list[HangingFakeProcess] = []
+
+    def launch(command: list[str], environment: dict[str, str]) -> HangingFakeProcess:
+        del command, environment
+        process = HangingFakeProcess()
+        processes.append(process)
+        return process
+
+    supervisor = AnalysisSupervisor(
+        settings,
+        camera_repository=cameras,
+        rule_repository=rules,
+        process_factory=launch,
+        monotonic_clock=clock,
+        now_factory=lambda: base_time + timedelta(seconds=clock.value),
+        owner_id="backend-a",
+    )
+    supervisor.reconcile_once()
+    process = processes[0]
+    run_id = supervisor.snapshot().items[0].analysis_run_id
+    assert run_id is not None
+    DetectionRepository(settings.database_path).create_analysis_run(
+        source_type="rtsp",
+        source_name="lobby",
+        camera_id=camera.id,
+        detector_type="test",
+        model_name="model.onnx",
+        model_sha256="a" * 64,
+        device="cpu",
+        input_size=640,
+        confidence_threshold=0.25,
+        nms_threshold=0.45,
+        sample_fps=2,
+        run_id=run_id,
+    )
+    with connect_database(settings.database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO tracks (
+                analysis_run_id, track_id, class_id, class_name,
+                first_sample_index, last_sample_index,
+                first_seen_timestamp_seconds, last_seen_timestamp_seconds,
+                observation_count, max_confidence, is_active
+            ) VALUES (?, 1, 0, 'person', 0, 0, 0, 0, 1, 0.9, 1)
+            """,
+            (run_id,),
+        )
+        connection.commit()
+
+    clock.value = 1
+    supervisor._consume_worker_record(
+        camera.id,
+        process,
+        {
+            "event": "rtsp_worker_heartbeat",
+            "stage": "database_save",
+            "stage_started_at": (base_time + timedelta(seconds=1)).isoformat(),
+            "last_frame_at": base_time.isoformat(),
+        },
+    )
+    clock.value = 10.9
+    supervisor.reconcile_once()
+    assert process.terminated is False
+    assert process.killed is False
+
+    clock.value = 11.1
+    supervisor.reconcile_once()
+
+    snapshot = supervisor.snapshot().items[0]
+    assert process.terminated is True
+    assert process.killed is True
+    assert snapshot.status is AnalysisWorkerStatus.FAILED
+    assert snapshot.current_error_type == "database_save_stalled"
+    assert snapshot.last_failure_type == "database_save_stalled"
+    assert snapshot.last_failure_run_id == run_id
+    assert snapshot.next_restart_at is not None
+    with connect_database(settings.database_path) as connection:
+        run = connection.execute(
+            "SELECT status, completion_reason FROM analysis_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        active_tracks = connection.execute(
+            "SELECT COUNT(*) FROM tracks WHERE analysis_run_id = ? AND is_active = 1",
+            (run_id,),
+        ).fetchone()[0]
+    assert run["status"] == AnalysisRunStatus.INTERRUPTED
+    assert run["completion_reason"] == "watchdog_database_save_stalled"
+    assert active_tracks == 0
+
+
+def test_failure_summary_survives_supervisor_recreation_and_limits_restart_storm(
+    tmp_path: Path,
+) -> None:
+    clock = FakeClock()
+    base_time = datetime(2026, 8, 21, 9, tzinfo=UTC)
+    settings = _settings(
+        tmp_path,
+        analysis_supervisor_max_restarts_in_window=2,
+        analysis_supervisor_restart_window_seconds=60,
+    )
+    initialize_database(settings.database_path)
+    cameras = CameraRepository(settings.database_path)
+    rules = RuleRepository(settings.database_path)
+    camera = cameras.create_camera(name="Lobby", stream_path="lobby")
+    _create_color_rule(rules, camera.stream_path, "Rule")
+    processes: list[FakeProcess] = []
+
+    def launch(command: list[str], environment: dict[str, str]) -> FakeProcess:
+        del command, environment
+        process = FakeProcess()
+        processes.append(process)
+        return process
+
+    supervisor = AnalysisSupervisor(
+        settings,
+        camera_repository=cameras,
+        rule_repository=rules,
+        process_factory=launch,
+        monotonic_clock=clock,
+        now_factory=lambda: base_time + timedelta(seconds=clock.value),
+        owner_id="backend-a",
+    )
+    supervisor.reconcile_once()
+    processes[0].return_code = 3
+    supervisor.reconcile_once()
+    clock.value = 2
+    supervisor.reconcile_once()
+    processes[1].return_code = 4
+    supervisor.reconcile_once()
+
+    rate_limited = supervisor.snapshot().items[0]
+    assert rate_limited.restart_count == 2
+    assert rate_limited.next_restart_at == base_time + timedelta(seconds=60)
+    clock.value = 59
+    supervisor.reconcile_once()
+    assert len(processes) == 2
+
+    supervisor.lease_repository.release_all("backend-a")
+    recreated = AnalysisSupervisor(
+        settings,
+        camera_repository=cameras,
+        rule_repository=rules,
+        failure_repository=AnalysisWorkerFailureRepository(settings.database_path),
+        process_factory=launch,
+        monotonic_clock=clock,
+        now_factory=lambda: base_time + timedelta(seconds=clock.value),
+        owner_id="backend-b",
+    )
+    recreated.reconcile_once()
+    summary = recreated.snapshot().items[0]
+    assert summary.restart_count == 2
+    assert summary.current_error_type is None
+    assert summary.last_failure_type == "ProcessExit4"
+    assert summary.last_failure_message == "analysis worker exited unexpectedly"
+
+
+def test_backend_shutdown_marks_the_current_run_interrupted(tmp_path: Path) -> None:
+    settings = _settings(tmp_path)
+    initialize_database(settings.database_path)
+    cameras = CameraRepository(settings.database_path)
+    rules = RuleRepository(settings.database_path)
+    camera = cameras.create_camera(name="Lobby", stream_path="lobby")
+    _create_color_rule(rules, camera.stream_path, "Rule")
+    process = FakeProcess()
+
+    supervisor = AnalysisSupervisor(
+        settings,
+        camera_repository=cameras,
+        rule_repository=rules,
+        process_factory=lambda command, environment: process,
+        owner_id="backend-a",
+    )
+    supervisor.reconcile_once()
+    run_id = supervisor.snapshot().items[0].analysis_run_id
+    assert run_id is not None
+    DetectionRepository(settings.database_path).create_analysis_run(
+        source_type="rtsp",
+        source_name="lobby",
+        camera_id=camera.id,
+        detector_type="test",
+        model_name="model.onnx",
+        model_sha256="a" * 64,
+        device="cpu",
+        input_size=640,
+        confidence_threshold=0.25,
+        nms_threshold=0.45,
+        sample_fps=2,
+        run_id=run_id,
+    )
+
+    supervisor.stop()
+
+    with connect_database(settings.database_path) as connection:
+        run = connection.execute(
+            "SELECT status, completion_reason FROM analysis_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+    assert process.terminated is True
+    assert run["status"] == AnalysisRunStatus.INTERRUPTED
+    assert run["completion_reason"] == "backend_shutdown"

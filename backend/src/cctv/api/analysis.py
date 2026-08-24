@@ -42,6 +42,7 @@ class AnalysisRunResponse(BaseModel):
     processed_frames: int
     total_detections: int
     error_type: str | None
+    completion_reason: str | None
 
 
 class AnalysisRunPageResponse(BaseModel):

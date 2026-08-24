@@ -19,7 +19,7 @@ from cctv.cameras import (
 from cctv.core.logging import configure_logging, shutdown_logging
 from cctv.core.settings import AppMode, Settings, get_settings
 from cctv.dashboard import TestSessionManager
-from cctv.db import CameraRepository, initialize_database
+from cctv.db import AnalysisRunRecoveryRepository, CameraRepository, initialize_database
 from cctv.hiperwall import HiperwallActionWorker, HiperwallClient
 from cctv.workers import AnalysisSupervisor, RetentionWorker
 
@@ -79,8 +79,34 @@ def create_app(
             shutdown_logging()
             raise
 
+        try:
+            run_recovery = AnalysisRunRecoveryRepository(
+                database_state.path
+            ).recover_orphaned_runs()
+        except Exception:
+            logger.exception(
+                "Orphaned analysis run recovery failed",
+                extra={"event": "analysis_run_startup_recovery_failed"},
+            )
+            shutdown_logging()
+            raise
+        logger.info(
+            "Orphaned analysis run recovery completed",
+            extra={
+                "event": "analysis_run_startup_recovery_completed",
+                "recovered_run_count": run_recovery.recovered_run_count,
+                "recovered_run_ids": run_recovery.recovered_run_ids,
+                "closed_active_track_count": run_recovery.closed_active_track_count,
+                "preserved_person_instance_count": (
+                    run_recovery.preserved_person_instance_count
+                ),
+                "recovery_reason": run_recovery.reason,
+            },
+        )
+
         application.state.settings = application_settings
         application.state.database = database_state
+        application.state.analysis_run_recovery = run_recovery
         application.state.hiperwall_client = hiperwall_client
         application.state.test_session_manager = test_session_manager or TestSessionManager(
             application_settings

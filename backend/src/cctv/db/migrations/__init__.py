@@ -24,6 +24,7 @@ from cctv.db.migrations.v0017_rule_soft_delete import apply as apply_v0017
 from cctv.db.migrations.v0018_analysis_worker_leases import apply as apply_v0018
 from cctv.db.migrations.v0019_hiperwall_display_states import apply as apply_v0019
 from cctv.db.migrations.v0020_maintenance_leases import apply as apply_v0020
+from cctv.db.migrations.v0021_analysis_worker_recovery import apply as apply_v0021
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ MIGRATIONS = (
     Migration(version=18, name="analysis_worker_leases", apply=apply_v0018),
     Migration(version=19, name="hiperwall_display_states", apply=apply_v0019),
     Migration(version=20, name="maintenance_leases", apply=apply_v0020),
+    Migration(version=21, name="analysis_worker_recovery", apply=apply_v0021),
 )
 
 LATEST_SCHEMA_VERSION = MIGRATIONS[-1].version
